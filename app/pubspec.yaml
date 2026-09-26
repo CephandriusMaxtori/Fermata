@@ -21,8 +21,8 @@ dependencies:
   # State management.
   flutter_riverpod: ^3.4.3
 
-  # Persistence. drift_flutter supplies the native QueryExecutor; the schema
-  # and repositories live in fermata_data.
+  # Persistence. The schema and repositories live in fermata_data; the app
+  # supplies the native QueryExecutor via drift_flutter.
   drift_flutter: ^0.3.1
 
   # Import pipeline.
