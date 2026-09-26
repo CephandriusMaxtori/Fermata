@@ -1,0 +1,13 @@
+name: fermata_workspace
+description: >-
+  Workspace root for the Fermata monorepo: the Android app plus the shared
+  core and data packages.
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+workspace:
+  - app
+  - packages/fermata_core
+  - packages/fermata_data

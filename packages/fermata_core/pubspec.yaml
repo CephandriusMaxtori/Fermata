@@ -1,0 +1,20 @@
+name: fermata_core
+description: >-
+  Pure Dart domain models, page geometry and repository contracts for Fermata.
+  Deliberately free of Flutter, dart:io and database dependencies so it can be
+  consumed by the Android app, the data layer and the future web UI alike.
+version: 0.1.0
+publish_to: none
+
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  collection: ^1.19.0
+  meta: ^1.15.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0

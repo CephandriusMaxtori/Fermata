@@ -1,0 +1,45 @@
+name: fermata
+description: "Fermata - a sheet music keeping and practice app"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # PDF engine. Used through pdfrx_engine's PdfPage.render(), not through
+  # pdfrx's own viewer widgets, which are built on the separate material_ui
+  # package and would clash with our Material 3 / One UI styling.
+  pdfrx: ^2.6.5
+
+  # State management.
+  flutter_riverpod: ^3.4.3
+
+  # Persistence. drift_flutter supplies the native QueryExecutor; the schema
+  # and repositories live in fermata_data.
+  drift_flutter: ^0.3.1
+
+  # Import pipeline.
+  file_picker: ^13.1.0
+  path_provider: ^2.1.5
+  path: ^1.9.0
+
+  # Shared domain layer.
+  fermata_core:
+    path: ../packages/fermata_core
+  fermata_data:
+    path: ../packages/fermata_data
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

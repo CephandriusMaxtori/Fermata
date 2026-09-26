@@ -1,0 +1,22 @@
+# Normalize line endings in the repository; check out platform-native.
+* text=auto eol=lf
+
+# Android and Gradle build files are LF-only by convention.
+*.kt text eol=lf
+*.kts text eol=lf
+*.gradle text eol=lf
+gradlew text eol=lf
+
+# Binary assets must never be touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.icns binary
+*.ttf binary
+*.otf binary
+*.sf2 binary
+*.sf3 binary
+*.mid binary
+*.midi binary
+*.mid file-not-ignored=false
