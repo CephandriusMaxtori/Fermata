@@ -249,24 +249,37 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final box = constraints.biggest;
-
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: widget.drawingMode
-              ? null
-              : (details) => _reportTap(details.localPosition, box),
-          onPanStart: widget.drawingMode
-              ? (details) => _beginStroke(details.localPosition, box)
-              : null,
-          onPanUpdate: widget.drawingMode
-              ? (details) => _extendStroke(details.localPosition, box)
-              : null,
-          onPanEnd: widget.drawingMode ? (_) => _commitStroke() : null,
-          child: Center(
-            child: SizedBox(
-              width: _logicalSize.width,
-              height: _logicalSize.height,
+                // The gesture detector sits inside the SizedBox rather than wrapping it.
+        // That makes its hit-test box exactly the box the page and the ink
+        // occupy, so a normalized coordinate from a touch means the same thing
+        // to the painter. Wrapping the SizedBox instead would make the gesture
+        // box the whole viewport, and every mark would land in the wrong place
+        // whenever the page does not fill it exactly.
+        return Center(
+          child: SizedBox(
+            width: _logicalSize.width,
+            height: _logicalSize.height,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTapUp: widget.drawingMode
+                  ? null
+                  : (details) => _reportTap(
+                      details.localPosition,
+                      _logicalSize,
+                    ),
+              onPanStart: widget.drawingMode
+                  ? (details) => _beginStroke(
+                      details.localPosition,
+                      _logicalSize,
+                    )
+                  : null,
+              onPanUpdate: widget.drawingMode
+                  ? (details) => _extendStroke(
+                      details.localPosition,
+                      _logicalSize,
+                    )
+                  : null,
+              onPanEnd: widget.drawingMode ? (_) => _commitStroke() : null,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -299,7 +312,7 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
   /// support: pedals arrive as key events and are not always present, so there
   /// is always a way to turn the page with a thumb.
   void _reportTap(Offset local, Size box) {
-    if (box.isEmpty) return;
+    if (box.isEmpty || box.width <= 0) return;
     final third = box.width / 3;
     if (local.dx < third) {
       widget.onTapZone(TapZone.previous);
@@ -311,14 +324,16 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
   }
 
   void _beginStroke(Offset local, Size box) {
-    if (box.isEmpty) return;
+    // Until the page has been measured _logicalSize is zero, and dividing by
+    // it would yield infinities rather than coordinates.
+    if (box.isEmpty || box.width <= 0 || box.height <= 0) return;
     ref
         .read(liveStrokeProvider.notifier)
         .begin(_normalized(local, box));
   }
 
   void _extendStroke(Offset local, Size box) {
-    if (box.isEmpty) return;
+    if (box.isEmpty || box.width <= 0 || box.height <= 0) return;
     ref.read(liveStrokeProvider.notifier).extend(_normalized(local, box));
   }
 

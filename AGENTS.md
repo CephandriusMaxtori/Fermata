@@ -125,10 +125,16 @@ These are the things that silently break if you "clean them up".
 - **Normalized coordinates.** Ink is stored as `[0,1]` fractions of the page box
   (`geometry/normalized_point.dart:3-9`) and stroke width as a fraction of page width
   (`stroke.dart:92-94`). The painter resolves both through `size`, the same box the page image
-  occupies. **Never store pixels or PDF points in an annotation.** ⚠️ *Known bug: the gesture side
-  (`page_stack.dart:244,317-323`) normalizes against `constraints.biggest` (the viewport) while the
-  painter multiplies by `_logicalSize` (the fitted page). These agree only when the page exactly
-  fills the viewport. Fix before tuning anything else about drawing.*
+  occupies. **Never store pixels or PDF points in an annotation.**
+- **The gesture box must be the paint box.** In `ScorePageView` the `GestureDetector` goes
+  *inside* the `SizedBox` that sizes the page, never wrapping it. That makes its hit-test box
+  exactly the box the page and the ink occupy. Wrapping it instead makes the gesture box the whole
+  viewport, and every mark lands in the wrong place on any letterboxed page. This was a real bug;
+  `app/test/page_stack_alignment_test.dart` pins it and is verified to fail if the nesting is
+  reversed.
+- **Committed ink is streamed, not fetched.** `strokesForPageProvider` must be a `StreamProvider`
+  over `watchStrokes`. A stroke is persisted after the finger lifts, so a one-shot read leaves the
+  overlay showing the state from before the last mark.
 - **`pdfrx` is a document loader and page rasteriser — never a widget library.** Stated three times
   (`app/pubspec.yaml:16-19`, `providers/pdfrx_page_counter.dart:11-14`,
   `viewer/pdfrx_page_renderer.dart:11-17`). Its bundled viewer widgets live in the separate

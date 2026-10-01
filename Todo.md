@@ -15,7 +15,7 @@ discovered work, and log deviations at the bottom.
 
 All items below were verified by reading the implementation, not inferred from file names.
 
-**Baseline: `flutter analyze` clean, 178 tests passing** (111 `fermata_core` + 67 `fermata_data`).
+**Baseline: `flutter analyze` clean, 180 tests passing** (2 `app` + 111 `fermata_core` + 67 `fermata_data`).
 Note `dart test` at the workspace root fails — it needs a reporter arg; run it per package.
 
 Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/smf/`:
@@ -26,15 +26,11 @@ Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/s
 
 ## Immediate next steps
 
-1. [!] **Fix the annotation alignment bug** (M3 blocker) — gestures normalize against the viewport,
-   painting against the fitted page. Ink lands wrong whenever the page doesn't exactly fill it.
-2. [!] **Fix committed strokes not appearing** — `getStrokes` one-shot + no invalidation, while
-   `watchStrokes` sits unused.
-3. [ ] Fix `BrushSelection.copyWith` dropping `kind` — the highlighter silently reverts to pen.
-4. [ ] Pick an audio engine (see [M7](#m7---midi-import--playback--metronome))
-5. [ ] `app/analysis_options.yaml` is still the stock `flutter create` file — bring it to parity with
+1. [ ] Fix `BrushSelection.copyWith` dropping `kind` — the highlighter silently reverts to pen.
+2. [ ] Pick an audio engine (see [M7](#m7---midi-import--playback--metronome))
+3. [ ] `app/analysis_options.yaml` is still the stock `flutter create` file — bring it to parity with
    the packages' strictness
-6. [ ] No CI — every push is unverified except by hand
+4. [ ] No CI — every push is unverified except by hand
 
 ---
 
@@ -51,17 +47,19 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
   by all three data-layer test files. **The suite had been reporting green-ish while cascade deletes
   were broken in production config.**
 
-- [!] **Ink is misplaced whenever the page doesn't exactly fill the viewport.**
-  `page_stack.dart:244,317-323` normalizes gestures against `constraints.biggest` (the `PageView`
-  viewport, since `GestureDetector` wraps `Center`), but `annotation_painter.dart:116-121`
-  multiplies by `_logicalSize` (the fitted page inside `SizedBox`). These agree only when the page
-  exactly fills the viewport. On first frame `_logicalSize` is `Size.zero`. Same mismatch in
-  `_reportTap`, so tap-to-turn zones are wrong too. **Highest-priority fix.**
-- [!] **Committed strokes don't appear.** `strokesForPageProvider` (`page_stack.dart:65-75`) is a
-  `FutureProvider.autoDispose.family` calling `getStrokes` — a one-shot. `_persistStroke`
-  (`score_viewer_screen.dart:146-149`) calls `upsertStroke` and invalidates nothing, so the overlay
-  keeps its stale list until the widget rebuilds. `watchStrokes` exists for exactly this and is
-  unused.
+- [x] **Ink was misplaced whenever the page didn't exactly fill the viewport.** The
+  `GestureDetector` wrapped `Center`, so its hit box was the whole `PageView` viewport, while
+  `AnnotationPainter` resolved coordinates through `_logicalSize` (the fitted page). The two only
+  agreed when the page exactly filled the viewport, so on any letterboxed page — which is most of
+  them — every mark landed in the wrong place, and tap-to-turn zones were wrong too. Fixed by moving
+  the detector *inside* the `SizedBox`, so the gesture box **is** the paint box, plus zero-size
+  guards for the pre-measurement frame. Pinned by `app/test/page_stack_alignment_test.dart`, which
+  was verified to fail against the old code.
+- [x] **Committed strokes didn't appear.** `strokesForPageProvider` was a
+  `FutureProvider.autoDispose.family` calling `getStrokes` — a one-shot — while `_persistStroke`
+  invalidated nothing, so the overlay kept its stale list until the widget rebuilt. `watchStrokes`
+  existed for exactly this and was unused. Now a `StreamProvider` over `watchLayers` +
+  `watchStrokes`, which also makes layer visibility reactive.
 - [ ] **`BrushSelection.copyWith` drops `kind`** (`brush_toolbar.dart:23-26`) — it always calls the
   pen constructor, so choosing a colour or dragging the width slider while the highlighter is
   selected silently switches back to pen.
@@ -223,10 +221,11 @@ FluidSynth either way, so owning a wrapper around it buys nothing.
 - [x] 111 `fermata_core` tests, including 26 parser tests over real byte fixtures.
 - [!] **Pick an audio engine**: `flutter_midi_engine` (SF2+SF3, actively maintained,
       Bluetooth/headset re-routing) vs `flutter_midi_pro` (pitch-preserving MIDI file
-      player, but Android-only for that). ⚠️ Both need 16 KB page-size verification for
-      Google Play. `flutter_midi_16kb` exists specifically for that and is far less
-      capable. `app/android/app/build.gradle.kts:19-20` already names
-      `flutter_midi_engine` — decide whether to honour that.
+      player, but Android-only for that). `app/android/app/build.gradle.kts:19-20` already
+      names `flutter_midi_engine` — decide whether to honour that.
+      ⚠️ 16 KB page-size compliance is **not a current concern**: Fermata is not going to
+      Google Play, so that requirement is not enforced. Revisit only if distribution
+      changes (see [Risks](#risks)).
 - [!] **Decide: engine file player vs. driving notes ourselves.** Either engine owns its
       own clock. Driving `playNote`/`stopNote` from our `MidiScore` timeline makes §7's
       shared-clock rule structural and makes the engine a swappable adapter.
@@ -262,6 +261,15 @@ FluidSynth either way, so owning a wrapper around it buys nothing.
 - [ ] Auto-scroll at a set pace, optionally locked to MIDI tempo — **subscribes to the same clock** (§7)
 - [x] Tap-to-turn fallback for thumb use
 - [ ] Add Bluetooth permissions to `AndroidManifest.xml` — currently declares **zero** permissions
+
+### M7a — 16 KB page size (not a current concern)
+
+Fermata is **not going to Google Play**, so the 16 KB page-size requirement is not
+enforced and `flutter_midi_16kb` is not needed. Revisit only if distribution changes.
+
+It is still a *device* concern: newer Android hardware uses 16 KB pages, and a native
+library not compiled for that alignment can fail to load there. Worth knowing before
+distribution changes, not worth designing around now.
 
 ### M11 — Backup / restore
 
@@ -338,7 +346,7 @@ Audited 2026-09-30. **No current choice blocks iOS.**
 
 | Risk | Status |
 |---|---|
-| Annotation alignment drift across zoom/scroll | **Live bug** — gesture/paint box mismatch. See Bugs. |
+| Annotation alignment drift across zoom/scroll | **Fixed** — gesture box now equals the paint box; pinned by a widget test that fails against the old code. |
 | Large multi-page score performance | Open. Raster cache exists; no low-end testing. |
 | Freehand precision (stylus vs fingertip) | Open. |
 | MIDI fidelity varies by device/soundfont | Open; blocked on the M7 decision. |
@@ -347,6 +355,7 @@ Audited 2026-09-30. **No current choice blocks iOS.**
 | Android-only plugins block iOS | **Resolved** — audit found none. |
 | OMR runtime mismatch + AGPL-3.0 | Go/no-go before commitment. |
 | No CI | Every push is unverified except by hand. |
+| 16 KB page sizes | Not enforced (no Play Store). Revisit only if distribution changes. |
 
 ---
 
@@ -366,5 +375,10 @@ Audited 2026-09-30. **No current choice blocks iOS.**
   Consequence: no `onUpgrade` yet, so the first schema change must add the migration strategy.
 - **Filter/sort runs in Dart, not SQL** — deliberate (`score_repository.dart:14-17`), diverges from
   what a SQL-first reader would expect.
+- **Fermata's own SMF parser instead of a package.** `DESIGN.md` §9 lists `flutter_midi` and
+  `flutter_sequencer` as candidates; both declare pre-null-safety SDK constraints and cannot resolve
+  on Dart 3.13, so neither is usable. `dart_midi_pro` worked but had ~23 downloads/month. We own the
+  *parser*; the *synth* stays FluidSynth behind an interface, because owning a wrapper around someone
+  else's synth would buy nothing.
 - **An earlier draft of this file credited `pdfx` and assumed a fresh single-package project.** Both
   wrong: the real repo is a pub workspace using `pdfrx`. Corrected after reading the code.
