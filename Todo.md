@@ -15,8 +15,12 @@ discovered work, and log deviations at the bottom.
 
 All items below were verified by reading the implementation, not inferred from file names.
 
-**Baseline: `flutter analyze` clean, 117 tests passing** (50 `fermata_core` + 67 `fermata_data`).
+**Baseline: `flutter analyze` clean, 178 tests passing** (111 `fermata_core` + 67 `fermata_data`).
 Note `dart test` at the workspace root fails — it needs a reporter arg; run it per package.
+
+Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/smf/`:
+`byte_cursor.dart` (bounds-checked reads, VLQ), `smf_parser.dart` (lossless event layer),
+`smf_midi_score.dart` (interpretation). Add format quirks there, never at a call site.
 
 ---
 
@@ -27,7 +31,7 @@ Note `dart test` at the workspace root fails — it needs a reporter arg; run it
 2. [!] **Fix committed strokes not appearing** — `getStrokes` one-shot + no invalidation, while
    `watchStrokes` sits unused.
 3. [ ] Fix `BrushSelection.copyWith` dropping `kind` — the highlighter silently reverts to pen.
-4. [ ] Add the three MIDI packages (see [M7](#m7---midi-import--playback--metronome))
+4. [ ] Pick an audio engine (see [M7](#m7---midi-import--playback--metronome))
 5. [ ] `app/analysis_options.yaml` is still the stock `flutter create` file — bring it to parity with
    the packages' strictness
 6. [ ] No CI — every push is unverified except by hand
@@ -191,28 +195,48 @@ The hard part is built and well tested; what's missing is correctness at the sea
 
 Stack decision (researched 2026-09-30):
 
-| Concern | Package | Why |
+| Concern | Choice | Why |
 |---|---|---|
-| Audio | **`flutter_midi_pro` ^4.0.4** | FluidSynth. `setMidiTempo(0.5)` = half speed **same pitch**, `seekMidi`, `setMidiLoop`. MIT, verified publisher, 0 open issues, active. Closes §9's hardest question — `just_audio`/`audioplayers` resample and drop pitch; `flutter_sequencer` is 4 yrs unmaintained. |
-| Parsing | **`dart_midi_pro`** | Pure-Dart SMF parser/writer. MIT. Only viable reader (`midi_util` is write-only with an unclear license). ⚠️ ~23 downloads/mo, unverified uploader — **wrap behind our own `MidiScore` interface** so a swap is contained. |
-| Pitch math | **`music_notes` ^0.28.0** | Note names, enharmonics, `Pitch.frequency()` from raw MIDI note numbers. BSD-3, `very_good_analysis`, pure Dart. Not an SMF parser. |
+| Parsing | **Our own SMF reader** (`fermata_core/lib/src/midi/smf/`) | Written in-repo. See the note below. |
+| Pitch math | **`music_notes` ^0.28.0** | Note names, enharmonics, frequencies. BSD-3, pure Dart. |
+| Audio | **Still undecided** — `flutter_midi_engine` or `flutter_midi_pro` | Both wrap FluidSynth; see below. |
+
+**On writing our own parser:** the Dart ecosystem has no maintained SMF reader.
+`flutter_sequencer` and `flutter_midi` both declare pre-null-safety SDK constraints
+and cannot resolve on Dart 3.13. `dart_midi_pro` works but is a ~23-downloads/month
+package with an unverified uploader. Since every future extension (measure mapping,
+cue points, OMR output, MIDI *writing*) lands in this layer, owning it is worth
+~500 lines. Note the split: we own the **parser**, not the **synth** — the synth is
+FluidSynth either way, so owning a wrapper around it buys nothing.
 
 - [x] `MidiFile` model + `PlaybackEdits` (tempo scale, `LoopRange`, muted channels, count-in bars,
       cue points), `editsJson` round-trip tested; malformed blob falls back to defaults
 - [x] `MidiFiles` table, `DriftPlaybackRepository`, layout `midi/<id>.mid`
-- [ ] Add the three packages above
-- [ ] `MidiScore` interface in `fermata_core` (pure Dart): note events by tick, tempo map, tick↔measure
-- [!] **Decide: plugin file player vs. driving notes ourselves.** `flutter_midi_pro` has a MIDI file
-      player, but it owns its own clock — we can read position but not be the master of it. Driving
-      `playNote`/`stopNote` from our own `PlaybackTimeline` makes §7's shared-clock rule structural and
-      makes the plugin a swappable adapter. **Prototype both early** (§10 risk #5); start with the
-      plugin's player since it sounds correct immediately.
+- [x] `MidiScore` interface in `fermata_core`: notes by tick, tempo map, time signatures,
+      tick↔measure, tick↔duration, `pitchRange`. Pure Dart, no plugin.
+- [x] `SmfParser` — own SMF reader. Header/format/division, chunk framing, VLQ,
+      **running status**, all channel voices, meta events, SMPTE division, and
+      bounds-checked reads that throw `MidiFormatException` with a byte offset.
+- [x] `SmfMidiScore` — interpretation layer: note pairing (incl. zero-velocity
+      note-offs and unterminated notes), tempo/signature assembly, markers and cue
+      points read from the file.
+- [x] 111 `fermata_core` tests, including 26 parser tests over real byte fixtures.
+- [!] **Pick an audio engine**: `flutter_midi_engine` (SF2+SF3, actively maintained,
+      Bluetooth/headset re-routing) vs `flutter_midi_pro` (pitch-preserving MIDI file
+      player, but Android-only for that). ⚠️ Both need 16 KB page-size verification for
+      Google Play. `flutter_midi_16kb` exists specifically for that and is far less
+      capable. `app/android/app/build.gradle.kts:19-20` already names
+      `flutter_midi_engine` — decide whether to honour that.
+- [!] **Decide: engine file player vs. driving notes ourselves.** Either engine owns its
+      own clock. Driving `playNote`/`stopNote` from our `MidiScore` timeline makes §7's
+      shared-clock rule structural and makes the engine a swappable adapter.
+      **Prototype both early** (§10 risk #5); start with the engine's player since it
+      sounds correct immediately.
 - [ ] `.mid`/`.midi` import alongside PDFs/images
 - [ ] Associate MIDI with a Score, or standalone library item
 - [ ] On-device playback + soundfont loading (needs an SF2 asset; check its license/size)
 - [ ] Standalone metronome
-- [ ] Per-note events for the visualizer — the plugin exposes no note callbacks, which is precisely why
-      we need our own parse
+- [ ] MIDI *writing* — needed for OMR output (stretch goal) and for exporting edits
 
 ### M8 — A-B loop + count-in + tempo-independent pitch
 
@@ -305,7 +329,7 @@ Audited 2026-09-30. **No current choice blocks iOS.**
 | `flutter_riverpod` ^3.4.3 | ✅ | Pure Dart. |
 | `file_picker` ^13.1.0 | ✅ | **Requires iOS 14.0+.** v13 breaking rewrite: `pickFiles()` returns `List<PlatformFile>`, `FilePickerResult` is gone, `PlatformFile.length()` is `Future<int?>` (null ≠ empty). |
 | `path_provider` ^2.1.5 | ✅ | See the external-storage warning above. |
-| `flutter_midi_pro` | ⚠️ partial | SF2 synth ✅; **MIDI file player is Android-only** (iOS/macOS throw `UNSUPPORTED`). Another reason the plugin player is a swappable adapter. |
+| `flutter_midi_pro` | ⚠️ partial | SF2 synth ✅; **MIDI file player is Android-only** (iOS/macOS throw `UNSUPPORTED`). Another reason the engine is a swappable adapter. |
 | `go_router` | ✅ | Pure Dart. *(Not yet used — the app uses a plain `Navigator` by design.)* |
 
 ---

@@ -7,6 +7,44 @@ practice from your scores. Full design in [`DESIGN.md`](DESIGN.md); live checkli
 **Android-only.** No `ios/`, `web/`, `linux/`, `macos/` or `windows/` directory exists. iOS is a
 later phase (`DESIGN.md` §4, §11.14) — don't generate platform dirs unless asked.
 
+## The MIDI layer (ours, in `fermata_core/lib/src/midi/`)
+
+Three files, one direction:
+
+```
+smf/byte_cursor.dart   bounds-checked reads, variable-length quantities
+smf/smf_parser.dart   lossless: header, chunks, every event, in file order
+smf/smf_midi_score.dart  interpretation: note pairing, tempo/signature maps
+midi_score.dart       MidiScore + BaseMidiScore: every query, shared by all impls
+midi_pitch.dart       note number -> name, octave, frequency, black key
+```
+
+**We wrote the parser deliberately.** No maintained third-party SMF reader exists
+in Dart: `flutter_sequencer` and `flutter_midi` declare pre-null-safety SDK
+constraints and cannot resolve on Dart 3.13, and `dart_midi_pro` had ~23
+downloads/month. Every future MIDI feature — measure mapping, cue points, OMR
+output, MIDI writing — lands in this layer.
+
+Rules:
+
+- **Format quirks go in `SmfParser`, never at a call site.** Running status, VLQ,
+  zero-velocity note-offs, SMPTE division. All four are handled there and pinned by
+  `test/smf_parser_test.dart`.
+- **Keep the two layers separate.** `SmfParser` is lossless — it records what the
+  file says without interpreting it. `SmfMidiScore` interprets. Mixing them means
+  every quirk has to be understood twice.
+- **Put queries in `BaseMidiScore`, not an extension.** Extension members are not
+  inherited, so a class that `implements MidiScore` would have to re-declare them.
+- **We own the parser, not the synth.** The audio engine is FluidSynth either way;
+  owning a wrapper around it would buy nothing. The engine sits behind an
+  `AudioEngine` interface so it stays swappable.
+- **Never hand-roll maths.** `midi_pitch.dart` originally had a hand-written `pow`
+  that was wrong for fractional exponents — middle C came out as 220Hz. Use
+  `dart:math`; it is core Dart and importing it costs nothing.
+- Malformed input throws `MidiFormatException` with a byte offset. Never return a
+  partial score: a score silently missing music is worse than one that refuses to
+  open.
+
 ## Commands
 
 The repo is a single **Dart pub workspace** (`pubspec.yaml:10-13`), so one resolution covers all
