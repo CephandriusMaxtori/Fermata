@@ -37,15 +37,6 @@ class AppDatabase extends _$AppDatabase {
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-    onCreate: (m) async {
-      await m.createAll();
-      // Foreign keys are off by default in SQLite, and the cascade deletes that
-      // keep orphaned pages, layers and annotations from accumulating depend
-      // on them.
-      await customStatement('PRAGMA foreign_keys = ON');
-    },
-    beforeOpen: (details) async {
-      await customStatement('PRAGMA foreign_keys = ON');
-    },
+    onCreate: (m) => m.createAll(),
   );
 }

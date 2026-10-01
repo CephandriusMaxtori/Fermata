@@ -22,8 +22,11 @@ dependencies:
   flutter_riverpod: ^3.4.3
 
   # Persistence. The schema and repositories live in fermata_data; the app
-  # supplies the native QueryExecutor via drift_flutter.
+  # supplies the native QueryExecutor via drift_flutter. sqlite3 is listed
+  # directly because the app names CommonDatabase in the per-connection setup
+  # callback that enables foreign keys.
   drift_flutter: ^0.3.1
+  sqlite3: ^3.0.0
 
   # Import pipeline.
   file_picker: ^13.1.0
