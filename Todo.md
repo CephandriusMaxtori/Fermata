@@ -27,9 +27,16 @@ Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/s
 ## Immediate next steps
 
 1. [ ] Add `flutter_midi_engine` behind an `AudioEngine` interface (see [M7](#m7---midi-import--playback--metronome))
-2. [ ] Wire CI up on GitHub — workflow added, first run not yet observed
-3. [ ] Delete scores in the UI — `deleteScore` has no file cleanup (see [Bugs](#bugs-found-in-existing-code))
-4. [ ] Tags + setlists UI (M6)
+2. [ ] Fix `deleteScore` so it deletes files, not just rows (see [Bugs](#bugs-found-in-existing-code))
+3. [ ] Tags + setlists UI (M6)
+4. [ ] Score thumbnails — the grid always shows a placeholder
+
+## Tracking
+
+A Notion project tracker mirrors this checklist for planning — see the
+[Projects & Tasks](https://app.notion.com/p/60fd677f1c2f8262a34881428b2fa08c?pvs=204)
+workspace page. **`Todo.md` stays authoritative** because it is versioned with the
+code; update it in the same change as the code.
 
 ---
 
@@ -381,7 +388,7 @@ Audited 2026-09-30. **No current choice blocks iOS.**
 | Pedal hardware is device-dependent | Mitigation planned: on-screen fallback everywhere. |
 | Android-only plugins block iOS | **Resolved** — audit found none. |
 | OMR runtime mismatch + AGPL-3.0 | Go/no-go before commitment. |
-| No CI | **Workflow added** (`.github/workflows/ci.yml`): analyze, per-member tests, debug APK build. First run not yet observed. |
+| No CI | **Resolved** — `.github/workflows/ci.yml`: analyze, per-member tests, debug APK. First run passed; actions bumped off deprecated versions and the runner pinned to `ubuntu-24.04`. |
 | 16 KB page sizes | Not enforced (no Play Store). Revisit only if distribution changes. |
 
 ---
