@@ -45,6 +45,35 @@ Rules:
   partial score: a score silently missing music is worse than one that refuses to
   open.
 
+## Analysis strictness is uniform
+
+All three packages use the same bar: `strict-casts`, `strict-inference`,
+`strict-raw-types`, `todo: warning`, and the shared rule set in each
+`analysis_options.yaml`. `app/` was on the stock `flutter create` config until
+2026-09-30 and briefly diverged; keeping them aligned is deliberate, because a
+divergence is invisible until a bug that a strict pass would have caught reaches
+runtime. Turning it on immediately found a floating `pdfrxFlutterInitialize()`
+future.
+
+If you add a rule to one `analysis_options.yaml`, add it to the other two.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every push and PR to `main`:
+
+- `flutter pub get` at the root (one resolution for the workspace)
+- `dart run build_runner build` in `packages/fermata_data` — **mandatory**, or
+  the job fails with hundreds of `undefined_getter` errors
+- `flutter analyze`
+- tests per member: `dart test` in each package, `flutter test` in `app/`
+- a debug APK build, to prove the Android toolchain and every native plugin
+  actually compile
+
+Two things to know if you touch it: `dart test` at the workspace root fails
+(no `test/` directory there, and it needs a reporter argument), and the workflow
+pins a Flutter minor series rather than `stable` so a Flutter release cannot turn
+`main` red.
+
 ## Commands
 
 The repo is a single **Dart pub workspace** (`pubspec.yaml:10-13`), so one resolution covers all
@@ -207,11 +236,12 @@ These are the things that silently break if you "clean them up".
 
 ## Gotchas
 
-- **Analysis strictness is asymmetric.** The two packages get `strict-casts`,
-  `strict-inference`, `strict-raw-types`, `todo: warning` and ~14 extra lints.
-  `app/analysis_options.yaml` is still the **stock `flutter create` file** — no strict modes, no
-  extra rules. So app code won't be held to the packages' bar, and a future TODO in `app/` won't
-  warn. Worth fixing.
+- ~~**Analysis strictness is asymmetric.**~~ **Fixed 2026-09-30.** `app/analysis_options.yaml`
+  now matches the packages: `strict-casts`, `strict-inference`, `strict-raw-types`, `todo: warning`,
+  the shared rule set, plus the widget-layer rules (`close_sinks`, `cancel_subscriptions`,
+  `use_build_context_synchronously`). Turning it on immediately found a floating
+  `pdfrxFlutterInitialize()` future in `pdfrx_page_renderer.dart`, which let a score open race
+  pdfrx's native initialisation.
 - **Zero Android permissions are declared.** No `INTERNET`, no storage, no Bluetooth. `file_picker`
   uses SAF so none are needed today; pedal support will require adding Bluetooth ones. Don't add
   permissions speculatively.

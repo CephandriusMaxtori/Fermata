@@ -26,11 +26,10 @@ Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/s
 
 ## Immediate next steps
 
-1. [ ] Pick an audio engine (see [M7](#m7---midi-import--playback--metronome))
-2. [ ] `app/analysis_options.yaml` is still the stock `flutter create` file — bring it to parity with
-   the packages' strictness
-3. [ ] No CI — every push is unverified except by hand. **Note: the JetBrains IDE here
-   auto-commits and auto-pushes on frame deactivation, which will race with manual commits.**
+1. [ ] Add `flutter_midi_engine` behind an `AudioEngine` interface (see [M7](#m7---midi-import--playback--metronome))
+2. [ ] Wire CI up on GitHub — workflow added, first run not yet observed
+3. [ ] Delete scores in the UI — `deleteScore` has no file cleanup (see [Bugs](#bugs-found-in-existing-code))
+4. [ ] Tags + setlists UI (M6)
 
 ---
 
@@ -206,7 +205,29 @@ Stack decision (researched 2026-09-30):
 |---|---|---|
 | Parsing | **Our own SMF reader** (`fermata_core/lib/src/midi/smf/`) | Written in-repo. See the note below. |
 | Pitch math | **`music_notes` ^0.28.0** | Note names, enharmonics, frequencies. BSD-3, pure Dart. |
-| Audio | **Still undecided** — `flutter_midi_engine` or `flutter_midi_pro` | Both wrap FluidSynth; see below. |
+| Audio | **`flutter_midi_engine` ^0.1.5** | Decided 2026-09-30. See below. |
+
+**Audio engine: `flutter_midi_engine`.** Chosen over `flutter_midi_pro` on integration risk,
+not on features — since we drive notes ourselves from `MidiScore`, the headline advantage of
+`flutter_midi_pro` (a built-in pitch-preserving MIDI file player) is not something we use.
+
+- **AGP 9 support, explicitly.** It detects the AGP major version and adapts, so it works on this
+  project's AGP 9.0.1 / Gradle 9.1.0. `flutter_midi_pro` needs a CMake native build plus a ~40 MB
+  FluidSynth download, which is a materially larger integration surface.
+- **A jitpack Maven AAR, not a native build.** Android pulls
+  `com.github.billthefarmer:mididriver:1.25`. No CMake, no NDK, no 40 MB download.
+- **SF2 and SF3**, 16 channels, per-channel volume/pan, program changes, reverb and chorus.
+- **Bluetooth/headset route re-routing** — directly relevant, since §6.5 practice happens with
+  headphones on.
+- Also matches the intent already recorded at `app/android/app/build.gradle.kts:19-20`.
+
+⚠️ **Adoption is thin: 3 stars, 1 fork, last push 2026-06-18.** Treat it as a swappable adapter
+behind our own `AudioEngine` interface, never as a dependency to call directly. If it rots, the
+swap is one class.
+
+- [ ] Add `flutter_midi_engine` and put it behind an `AudioEngine` interface
+- [ ] Wrap the plugin in an adapter so `fermata_core` and the UI never import it
+- [ ] Soundfont asset: pick an SF2/SF3 and check its licence and size before bundling
 
 **On writing our own parser:** the Dart ecosystem has no maintained SMF reader.
 `flutter_sequencer` and `flutter_midi` both declare pre-null-safety SDK constraints
@@ -228,13 +249,10 @@ FluidSynth either way, so owning a wrapper around it buys nothing.
       note-offs and unterminated notes), tempo/signature assembly, markers and cue
       points read from the file.
 - [x] 111 `fermata_core` tests, including 26 parser tests over real byte fixtures.
-- [!] **Pick an audio engine**: `flutter_midi_engine` (SF2+SF3, actively maintained,
-      Bluetooth/headset re-routing) vs `flutter_midi_pro` (pitch-preserving MIDI file
-      player, but Android-only for that). `app/android/app/build.gradle.kts:19-20` already
-      names `flutter_midi_engine` — decide whether to honour that.
-      ⚠️ 16 KB page-size compliance is **not a current concern**: Fermata is not going to
-      Google Play, so that requirement is not enforced. Revisit only if distribution
-      changes (see [Risks](#risks)).
+- [!] **Decide: engine file player vs. driving notes ourselves.** `flutter_midi_engine` exposes only
+      `playNote`/`stopNote`, so the timeline is ours either way — which settles the §7 shared-clock
+      question in our favour by construction. Drive notes from `MidiScore` and treat the engine as a
+      dumb synth behind an interface.
 - [!] **Decide: engine file player vs. driving notes ourselves.** Either engine owns its
       own clock. Driving `playNote`/`stopNote` from our `MidiScore` timeline makes §7's
       shared-clock rule structural and makes the engine a swappable adapter.
@@ -363,7 +381,7 @@ Audited 2026-09-30. **No current choice blocks iOS.**
 | Pedal hardware is device-dependent | Mitigation planned: on-screen fallback everywhere. |
 | Android-only plugins block iOS | **Resolved** — audit found none. |
 | OMR runtime mismatch + AGPL-3.0 | Go/no-go before commitment. |
-| No CI | Every push is unverified except by hand. |
+| No CI | **Workflow added** (`.github/workflows/ci.yml`): analyze, per-member tests, debug APK build. First run not yet observed. |
 | 16 KB page sizes | Not enforced (no Play Store). Revisit only if distribution changes. |
 
 ---

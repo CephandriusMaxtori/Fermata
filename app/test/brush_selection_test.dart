@@ -1,9 +1,8 @@
 import 'package:fermata/src/features/viewer/brush_selection.dart';
+import 'package:fermata/src/features/viewer/brush_toolbar.dart';
 import 'package:fermata_core/fermata_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:fermata/src/features/viewer/brush_toolbar.dart';
 
 void main() {
   group('BrushSelection.copyWith', () {

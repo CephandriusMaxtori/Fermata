@@ -16,6 +16,11 @@ import 'helpers/fake_page_renderer.dart';
 /// and the paint box are the same box, which is a structural property of the
 /// widget tree and so cannot be checked by unit-testing the geometry alone.
 void main() {
+  late FakeAnnotationRepository repository;
+
+  setUp(() => repository = FakeAnnotationRepository());
+  tearDown(() => repository.close());
+
   const page = ScorePage(
     id: 'page-1',
     scoreId: 'score-1',
@@ -152,6 +157,12 @@ void main() {
 class FakeAnnotationRepository implements AnnotationRepository {
   final _layers = StreamController<List<AnnotationLayer>>.broadcast();
   final _strokes = StreamController<List<Stroke>>.broadcast();
+
+  /// Called from `tearDown` so the broadcast controllers do not leak.
+  void close() {
+    _layers.close();
+    _strokes.close();
+  }
 
   final List<Stroke> savedStrokes = [];
 

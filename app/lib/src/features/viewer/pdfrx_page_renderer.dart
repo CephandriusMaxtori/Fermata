@@ -118,7 +118,10 @@ class PdfrxPageRenderer implements PageRenderer {
 
   Future<PdfDocument> _documentFor(String absolutePath) {
     return _documents.putIfAbsent(absolutePath, () async {
-      pdfrxFlutterInitialize();
+      // Must be awaited, not just called. pdfrx's native library has to be
+      // initialised before the first document is opened, and letting the future
+      // float means opening a score can race the initialisation.
+      await pdfrxFlutterInitialize();
       return PdfDocument.openFile(absolutePath);
     });
   }

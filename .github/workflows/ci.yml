@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: CI only needs to read the repository.
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel superseded runs on the same branch, but never cancel main itself -
+  # a half-finished run on main is worse than a stale queue.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  analyze-and-test:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # Pinned to a minor series rather than `stable` so a Flutter release
+          # cannot turn a green main red. Bump this deliberately.
+          flutter-version: "3.47.5"
+          cache: true
+
+      - name: Resolve dependencies
+        # One resolution for the whole pub workspace: app, fermata_core and
+        # fermata_data.
+        run: flutter pub get
+
+      # Generated drift code is gitignored, so a fresh checkout cannot analyze
+      # until build_runner has run. Without this the first job to check out
+      # fails with 461 undefined_getter errors.
+      - name: Generate drift code
+        working-directory: packages/fermata_data
+        run: dart run build_runner build
+
+      - name: Analyze
+        run: flutter analyze
+
+      # Run per member rather than `dart test` at the root: the workspace root
+      # has no test/ directory, and the app needs the Flutter SDK's test runner.
+      - name: Test fermata_core
+        working-directory: packages/fermata_core
+        run: dart test --reporter=github
+
+      - name: Test fermata_data
+        working-directory: packages/fermata_data
+        run: dart test --reporter=github
+
+      - name: Test app
+        working-directory: app
+        run: flutter test --reporter=github
+
+  build-android:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # A debug build is enough to prove the Android toolchain, the Kotlin
+    # package and every native plugin actually compile. Release signing needs
+    # secrets this repository does not have, and Fermata is not distributed yet.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.47.5"
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Generate drift code
+        working-directory: packages/fermata_data
+        run: dart run build_runner build
+
+      - name: Build
+        working-directory: app
+        run: flutter build apk --debug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: fermata-debug-apk
+          path: app/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 7
