@@ -62,16 +62,24 @@ final activeLayerProvider = FutureProvider.autoDispose
 typedef PageRef = ({String scoreId, int pageIndex});
 
 /// Committed ink on a page, limited to the visible layers.
-final strokesForPageProvider = FutureProvider.autoDispose
-    .family<List<Stroke>, PageRef>((ref, key) async {
+///
+/// A stream, not a future: a stroke is persisted after the finger lifts, so a
+/// one-shot read leaves the overlay showing the state from before the last mark
+/// and nothing appears until the widget is rebuilt. `watchStrokes` re-emits
+/// whenever the annotations table changes.
+final strokesForPageProvider = StreamProvider.autoDispose
+    .family<List<Stroke>, PageRef>((ref, key) async* {
       final repository = await ref.watch(annotationRepositoryProvider.future);
-      final layers = await repository.getLayers(key.scoreId);
-      final visible = layers.where((l) => l.visible).map((l) => l.id).toSet();
-      return repository.getStrokes(
-        scoreId: key.scoreId,
-        pageIndex: key.pageIndex,
-        layerIds: visible,
-      );
+      // Layer visibility is streamed too, so hiding a layer redraws without
+      // needing the page to be rebuilt.
+      await for (final layers in repository.watchLayers(key.scoreId)) {
+        final visible = layers.where((l) => l.visible).map((l) => l.id).toSet();
+        yield* repository.watchStrokes(
+          scoreId: key.scoreId,
+          pageIndex: key.pageIndex,
+          layerIds: visible,
+        );
+      }
     });
 
 /// Rasterises pages with pdfrx.
