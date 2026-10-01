@@ -1,45 +1,10 @@
 import 'package:fermata_core/fermata_core.dart';
 import 'package:flutter/material.dart';
 
+import 'brush_selection.dart';
+
 /// A horizontal third of the page area, for tap-to-turn.
 enum TapZone { previous, next, none }
-
-/// The pen or highlighter currently selected.
-class BrushSelection {
-  const BrushSelection({required this.color, required this.width})
-    : kind = AnnotationKind.pen;
-
-  const BrushSelection.highlighter({required this.color, required this.width})
-    : kind = AnnotationKind.highlighter;
-
-  /// Packed ARGB.
-  final int color;
-
-  /// Stroke width as a fraction of page width.
-  final double width;
-
-  final AnnotationKind kind;
-
-  BrushSelection copyWith({int? color, double? width}) => BrushSelection(
-    color: color ?? this.color,
-    width: width ?? this.width,
-  );
-}
-
-const _penColors = <int>[
-  0xFF1A1A1A,
-  0xFFD32F2F,
-  0xFF1976D2,
-  0xFF388E3C,
-  0xFFF9A825,
-];
-
-const _highlighterColors = <int>[
-  0xFFFFEB3B,
-  0xFF80CBC4,
-  0xFF90CAF9,
-  0xFFFFAB91,
-];
 
 /// Colour and width picker for the annotation tools.
 class BrushToolbar extends StatelessWidget {
@@ -52,9 +17,7 @@ class BrushToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final current = selection;
-    final colors = current.kind == AnnotationKind.pen
-        ? _penColors
-        : _highlighterColors;
+    final colors = current.palette;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -72,21 +35,16 @@ class BrushToolbar extends StatelessWidget {
                 icon: Icons.edit_rounded,
                 label: 'Pen',
                 selected: current.kind == AnnotationKind.pen,
-                onTap: () => onChanged(
-                  BrushSelection(color: current.color, width: current.width),
-                ),
+                onTap: () =>
+                    onChanged(current.withKind(AnnotationKind.pen)),
               ),
               const SizedBox(width: 8),
               _ToolToggle(
                 icon: Icons.brush_rounded,
                 label: 'Highlight',
                 selected: current.kind == AnnotationKind.highlighter,
-                onTap: () => onChanged(
-                  BrushSelection.highlighter(
-                    color: current.color,
-                    width: current.width,
-                  ),
-                ),
+                onTap: () =>
+                    onChanged(current.withKind(AnnotationKind.highlighter)),
               ),
             ],
           ),

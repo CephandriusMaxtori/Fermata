@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/library_providers.dart';
 import 'annotation_painter.dart';
+import 'brush_selection.dart';
 import 'brush_toolbar.dart';
 import 'page_renderer.dart';
 import 'pdfrx_page_renderer.dart';
@@ -246,6 +247,7 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
     final strokes =
         ref.watch(strokesForPageProvider(pageRef)).value ?? const <Stroke>[];
     final live = ref.watch(liveStrokeProvider);
+    final brush = ref.watch(brushProvider);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -293,6 +295,7 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
                         strokes: strokes,
                         size: _logicalSize,
                         liveStroke: live.isEmpty ? null : live,
+                        liveBrush: brush,
                       ),
                       size: _logicalSize,
                     ),

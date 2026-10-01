@@ -135,6 +135,16 @@ These are the things that silently break if you "clean them up".
 - **Committed ink is streamed, not fetched.** `strokesForPageProvider` must be a `StreamProvider`
   over `watchStrokes`. A stroke is persisted after the finger lifts, so a one-shot read leaves the
   overlay showing the state from before the last mark.
+- **Tool changes go through `BrushSelection.withKind`, and colour/width changes through
+  `copyWith`.** `copyWith` deliberately preserves `kind`: an earlier version called the pen
+  constructor, so choosing a colour or dragging the width slider silently reverted the highlighter
+  to a pen. The pen and highlighter palettes are **disjoint**, so `withKind` falls back to the new
+  palette's first colour rather than carrying an unpickable colour across.
+- **The live-stroke preview must match the committed stroke.** `AnnotationPainter` takes the
+  current `BrushSelection` and applies the same colour, width and `BlendMode` as a real stroke.
+  Do not reintroduce hard-coded preview colours.
+- **`BrushSelection` lives in `brush_selection.dart`**, not in `brush_toolbar.dart`. Three files
+  need it (toolbar, painter, provider); a shared value type should not be nested in one consumer.
 - **`pdfrx` is a document loader and page rasteriser — never a widget library.** Stated three times
   (`app/pubspec.yaml:16-19`, `providers/pdfrx_page_counter.dart:11-14`,
   `viewer/pdfrx_page_renderer.dart:11-17`). Its bundled viewer widgets live in the separate

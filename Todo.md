@@ -15,7 +15,7 @@ discovered work, and log deviations at the bottom.
 
 All items below were verified by reading the implementation, not inferred from file names.
 
-**Baseline: `flutter analyze` clean, 180 tests passing** (2 `app` + 111 `fermata_core` + 67 `fermata_data`).
+**Baseline: `flutter analyze` clean, 193 tests passing** (15 `app` + 111 `fermata_core` + 67 `fermata_data`).
 Note `dart test` at the workspace root fails — it needs a reporter arg; run it per package.
 
 Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/smf/`:
@@ -26,11 +26,11 @@ Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/s
 
 ## Immediate next steps
 
-1. [ ] Fix `BrushSelection.copyWith` dropping `kind` — the highlighter silently reverts to pen.
-2. [ ] Pick an audio engine (see [M7](#m7---midi-import--playback--metronome))
-3. [ ] `app/analysis_options.yaml` is still the stock `flutter create` file — bring it to parity with
+1. [ ] Pick an audio engine (see [M7](#m7---midi-import--playback--metronome))
+2. [ ] `app/analysis_options.yaml` is still the stock `flutter create` file — bring it to parity with
    the packages' strictness
-4. [ ] No CI — every push is unverified except by hand
+3. [ ] No CI — every push is unverified except by hand. **Note: the JetBrains IDE here
+   auto-commits and auto-pushes on frame deactivation, which will race with manual commits.**
 
 ---
 
@@ -60,11 +60,20 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
   invalidated nothing, so the overlay kept its stale list until the widget rebuilt. `watchStrokes`
   existed for exactly this and was unused. Now a `StreamProvider` over `watchLayers` +
   `watchStrokes`, which also makes layer visibility reactive.
-- [ ] **`BrushSelection.copyWith` drops `kind`** (`brush_toolbar.dart:23-26`) — it always calls the
-  pen constructor, so choosing a colour or dragging the width slider while the highlighter is
-  selected silently switches back to pen.
-- [ ] **Live-stroke preview ignores the brush** — `annotation_painter.dart:74-75` hard-codes
-  `0xFFD32F2F` and width `3.0`, so the in-progress mark doesn't match the committed one.
+- [x] **`BrushSelection.copyWith` dropped `kind`** — it always called the pen constructor, so
+  choosing a colour or dragging the width slider while the highlighter was selected silently
+  switched the tool back to pen. Fixed with an explicit private constructor. A second issue surfaced
+  while fixing it: the pen and highlighter palettes are **disjoint**, so switching tools carried
+  over a colour the new palette does not offer, leaving the toolbar with no selected dot and the
+  user drawing in a colour they could not pick again. `withKind` now falls back to the new
+  palette's first colour.
+- [x] **Live-stroke preview ignored the brush** — `annotation_painter.dart` hard-coded a red 3px
+  stroke, so a user with the highlighter selected saw a thin red line that became a thick translucent
+  band on lift. The painter now takes the `BrushSelection` and applies the same colour, width and
+  blend rules as a committed stroke.
+- [x] **`BrushSelection` moved out of `brush_toolbar.dart`** into its own `brush_selection.dart` —
+  the toolbar, the painter and the provider all need it, so a shared value type should not be
+  nested inside one of its consumers.
 - [ ] **`deleteScore` doesn't delete files.** The contract says "…its layers, its annotations **and
   its files**" (`repositories.dart:34-35`) but `score_repository.dart:88-93` only deletes rows.
   `FileStore.deleteScoreAssets` exists and is called only from tests — `ScoreRepository` has no

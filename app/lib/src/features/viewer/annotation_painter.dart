@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:fermata_core/fermata_core.dart';
 import 'package:flutter/material.dart';
 
+import 'brush_selection.dart';
+
 /// Draws a score's ink for one page.
 ///
 /// Every coordinate arrives normalized to the page box and is resolved through
@@ -14,6 +16,7 @@ class AnnotationPainter extends CustomPainter {
     required this.strokes,
     required this.size,
     this.liveStroke,
+    this.liveBrush,
   });
 
   final List<Stroke> strokes;
@@ -24,6 +27,13 @@ class AnnotationPainter extends CustomPainter {
   /// The stroke currently under the user's finger, drawn before it is committed
   /// so the pen feels responsive without a database write per pointer event.
   final List<StrokePoint>? liveStroke;
+
+  /// The brush the live stroke will be committed with.
+  ///
+  /// The preview has to match the committed mark. An earlier version hard-coded a
+  /// red 3px stroke, so a user with the highlighter selected saw a thin red line
+  /// that turned into a thick yellow band on lift.
+  final BrushSelection? liveBrush;
 
   @override
   void paint(Canvas canvas, Size canvasSize) {
@@ -67,14 +77,25 @@ class AnnotationPainter extends CustomPainter {
 
     final live = liveStroke;
     if (live != null && live.length > 1) {
+      final brush = liveBrush;
+      final isHighlighter = brush?.kind == AnnotationKind.highlighter;
       _paintPoints(
         canvas,
         live,
         Paint()
-          ..color = const Color(0xFFD32F2F)
-          ..strokeWidth = 3
+          // Same colour and width rules as a committed stroke, so the preview is
+          // an honest preview. Falls back to opaque black rather than a hard-coded
+          // red if no brush was supplied.
+          ..color = Color(brush?.color ?? 0xFF000000).withValues(
+            alpha: isHighlighter ? 0.42 : 1.0,
+          )
+          ..strokeWidth = math.max(
+            1,
+            (brush?.width ?? 0.006) * size.width,
+          )
           ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
+          ..strokeJoin = StrokeJoin.round
+          ..blendMode = isHighlighter ? BlendMode.multiply : BlendMode.srcOver,
       );
     }
   }
