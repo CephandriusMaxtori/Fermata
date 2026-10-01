@@ -1,10 +1,12 @@
 import 'dart:io';
 
-import 'package:drift/native.dart';
+
 import 'package:fermata_core/fermata_core.dart';
 import 'package:fermata_data/fermata_data.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import 'helpers/test_database.dart';
 
 /// Builds a throwaway library rooted at a fresh temp directory.
 Future<({AppDatabase database, FermataLayout layout, FileStore store, Directory root})>
@@ -13,7 +15,7 @@ makeLibrary() async {
   final layout = FermataLayout(root);
   await layout.ensureDirectories();
   return (
-    database: AppDatabase(NativeDatabase.memory()),
+    database: openTestDatabase(),
     layout: layout,
     store: FileStore(layout),
     root: root,

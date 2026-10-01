@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:drift/drift.dart' show Value;
-import 'package:drift/native.dart';
+
 import 'package:fermata_core/fermata_core.dart';
 import 'package:fermata_data/fermata_data.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import 'helpers/test_database.dart';
 
 late Directory root;
 late AppDatabase database;
@@ -39,7 +41,7 @@ void main() {
     final layout = FermataLayout(root);
     await layout.ensureDirectories();
     store = FileStore(layout);
-    database = AppDatabase(NativeDatabase.memory());
+    database = openTestDatabase();
     scores = DriftScoreRepository(database);
     annotations = DriftAnnotationRepository(database);
   });
