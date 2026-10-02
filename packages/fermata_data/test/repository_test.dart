@@ -42,7 +42,7 @@ void main() {
     await layout.ensureDirectories();
     store = FileStore(layout);
     database = openTestDatabase();
-    scores = DriftScoreRepository(database);
+    scores = DriftScoreRepository(database, fileStore: store);
     annotations = DriftAnnotationRepository(database);
   });
 
@@ -175,6 +175,33 @@ void main() {
       await sub.cancel();
 
       expect(emissions, [0, 1, 0]);
+    });
+
+    test('deleteScore deletes database records and score assets on disk', () async {
+      await scores.createScore(
+        score: makeScore(id: 'score-del'),
+        pages: const [
+          ScorePage(
+            id: 'page-1',
+            scoreId: 'score-del',
+            index: 0,
+            kind: PageSourceKind.pdf,
+            sourcePath: 'test.pdf',
+            pdfPageNumber: 1,
+          ),
+        ],
+      );
+
+      final scoreDir = Directory(store.layout.scoreDirectory('score-del'));
+      await scoreDir.create(recursive: true);
+      final dummyFile = File(p.join(scoreDir.path, 'test.pdf'));
+      await dummyFile.writeAsString('test content');
+      expect(dummyFile.existsSync(), isTrue);
+
+      await scores.deleteScore('score-del');
+
+      expect(await scores.getScore('score-del'), isNull);
+      expect(dummyFile.existsSync(), isFalse);
     });
 
     test('deleting a score cascades to its pages and layers', () async {

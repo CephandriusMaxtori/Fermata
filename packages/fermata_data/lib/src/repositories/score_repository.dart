@@ -2,29 +2,57 @@ import 'package:drift/drift.dart';
 import 'package:fermata_core/fermata_core.dart';
 
 import '../db/app_database.dart';
+import '../storage/file_store.dart';
 
 /// drift-backed [ScoreRepository].
 class DriftScoreRepository implements ScoreRepository {
-  DriftScoreRepository(this._database);
+  DriftScoreRepository(this._database, {this._fileStore});
 
   final AppDatabase _database;
+  final FileStore? _fileStore;
 
   @override
   Stream<List<Score>> watchScores(ScoreQuery query) {
-    // Filtering and sorting are done in Dart rather than SQL. The library is a
-    // personal collection measured in hundreds of scores, not thousands, and
-    // keeping the sort rules in one place means the tag, setlist and
-    // alphabetical orders cannot drift apart.
     return _database
         .select(_database.scores)
         .watch()
-        .map((rows) => applyScoreQuery(rows.map(_toScore).toList(), query));
+        .asyncMap((rows) => _applyQueryAndRelations(rows.map(_toScore).toList(), query));
   }
 
   @override
   Future<List<Score>> getScores(ScoreQuery query) async {
     final rows = await _database.select(_database.scores).get();
-    return applyScoreQuery(rows.map(_toScore).toList(), query);
+    return _applyQueryAndRelations(rows.map(_toScore).toList(), query);
+  }
+
+  Future<List<Score>> _applyQueryAndRelations(List<Score> scores, ScoreQuery query) async {
+    Iterable<Score> result = scores;
+
+    if (query.setlistId != null) {
+      final entries = await (_database.select(_database.setlistEntries)
+            ..where((t) => t.setlistId.equals(query.setlistId!))
+            ..orderBy([(t) => OrderingTerm.asc(t.position)]))
+          .get();
+      final scoreIds = entries.map((e) => e.scoreId).toList();
+      final scoreMap = {for (final s in result) s.id: s};
+      result = scoreIds.map((id) => scoreMap[id]).whereType<Score>();
+    }
+
+    if (query.tagIds.isNotEmpty) {
+      final tagRows = await (_database.select(_database.scoreTags)
+            ..where((t) => t.tagId.isIn(query.tagIds)))
+          .get();
+      final scoreToTags = <String, Set<String>>{};
+      for (final row in tagRows) {
+        scoreToTags.putIfAbsent(row.scoreId, () => {}).add(row.tagId);
+      }
+      result = result.where((score) {
+        final scoreTags = scoreToTags[score.id] ?? {};
+        return scoreTags.containsAll(query.tagIds);
+      });
+    }
+
+    return applyScoreQuery(result.toList(growable: false), query);
   }
 
   @override
@@ -90,6 +118,7 @@ class DriftScoreRepository implements ScoreRepository {
     await (_database.delete(
       _database.scores,
     )..where((t) => t.id.equals(scoreId))).go();
+    await _fileStore?.deleteScoreAssets(scoreId);
   }
 
   @override

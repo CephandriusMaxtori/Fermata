@@ -2,6 +2,7 @@ import 'package:fermata_core/fermata_core.dart';
 import 'package:flutter/material.dart';
 
 import 'features/library/library_screen.dart';
+import 'features/setlists/setlists_screen.dart';
 import 'features/viewer/score_viewer_screen.dart';
 import 'theme/fermata_theme.dart';
 
@@ -43,11 +44,7 @@ class _AppShellState extends State<AppShell> {
         index: _tabIndex,
         children: [
           LibraryScreen(onOpenScore: _openScore),
-          const _PlaceholderTab(
-            icon: Icons.queue_music_rounded,
-            title: 'Setlists',
-            message: 'Coming after the library.',
-          ),
+          SetlistsScreen(onOpenScore: _openScore),
           const _PlaceholderTab(
             icon: Icons.settings_rounded,
             title: 'Settings',

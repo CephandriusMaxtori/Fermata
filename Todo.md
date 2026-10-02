@@ -80,10 +80,7 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
 - [x] **`BrushSelection` moved out of `brush_toolbar.dart`** into its own `brush_selection.dart` —
   the toolbar, the painter and the provider all need it, so a shared value type should not be
   nested inside one of its consumers.
-- [ ] **`deleteScore` doesn't delete files.** The contract says "…its layers, its annotations **and
-  its files**" (`repositories.dart:34-35`) but `score_repository.dart:88-93` only deletes rows.
-  `FileStore.deleteScoreAssets` exists and is called only from tests — `ScoreRepository` has no
-  `FileStore`. Will bite whoever builds delete-in-UI.
+- [x] **`deleteScore` doesn't delete files.** Fixed — `DriftScoreRepository` now takes `FileStore` and invokes `deleteScoreAssets` when deleting a score, fulfilling the contract in `repositories.dart:34-35`. Tested in `repository_test.dart`.
 - [ ] **`pixelRatio` is dropped in production.** `pdfrx_page_renderer.dart:51-55,87-91` accepts it
   and passes *logical* pixels to `pdfPage.render`, so rasters are 1× and upscaled by
   `RawImage(fit: BoxFit.fill)` on high-DPI screens. `FakePageRenderer` *does* apply it, so tests

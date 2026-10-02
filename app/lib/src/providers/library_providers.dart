@@ -61,7 +61,10 @@ final fileStoreProvider = FutureProvider<FileStore>((ref) async {
 });
 
 final scoreRepositoryProvider = FutureProvider<ScoreRepository>((ref) async {
-  return DriftScoreRepository(await ref.watch(databaseProvider.future));
+  return DriftScoreRepository(
+    await ref.watch(databaseProvider.future),
+    fileStore: await ref.watch(fileStoreProvider.future),
+  );
 });
 
 final annotationRepositoryProvider = FutureProvider<AnnotationRepository>((
@@ -74,6 +77,21 @@ final organizationRepositoryProvider = FutureProvider<OrganizationRepository>((
   ref,
 ) async {
   return DriftOrganizationRepository(await ref.watch(databaseProvider.future));
+});
+
+final tagsProvider = StreamProvider.autoDispose<List<Tag>>((ref) async* {
+  final repo = await ref.watch(organizationRepositoryProvider.future);
+  yield* repo.watchTags();
+});
+
+final setlistsProvider = StreamProvider.autoDispose<List<Setlist>>((ref) async* {
+  final repo = await ref.watch(organizationRepositoryProvider.future);
+  yield* repo.watchSetlists();
+});
+
+final setlistEntriesProvider = StreamProvider.autoDispose.family<List<SetlistEntry>, String>((ref, setlistId) async* {
+  final repo = await ref.watch(organizationRepositoryProvider.future);
+  yield* repo.watchEntries(setlistId);
 });
 
 final playbackRepositoryProvider = FutureProvider<PlaybackRepository>((ref) async {
