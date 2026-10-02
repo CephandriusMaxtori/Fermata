@@ -34,19 +34,81 @@ abstract final class StrokeConditioner {
     return List<StrokePoint>.unmodifiable(kept);
   }
 
-  /// Smooths a point list with a Catmull-Rom spline.
+  /// Smooths a point list with a Catmull-Rom spline, preserving corners.
   ///
   /// Sampling the spline into a denser point list (rather than emitting curve
   /// segments) keeps the result representable as a plain polyline, which is
   /// what gets persisted.
+  ///
+  /// A plain Catmull-Rom spline has a continuous tangent at every control point,
+  /// so it cannot represent a corner: the direction change is smeared across the
+  /// samples on either side of the vertex and a 90-degree turn arrives as a
+  /// shallow arc. Curved handwriting wants that, but the corners in a stem, an
+  /// "L", or the hook of a "5" are exactly what makes writing legible, and
+  /// rounding them is what makes ink read as rope.
+  ///
+  /// So vertices where the direction changes by more than [cornerThresholdRadians]
+  /// are treated as run boundaries: each run between corners is splined on its
+  /// own and the corner vertex is emitted exactly once, unblurred. The threshold
+  /// trades the two off - set it high and handwriting keeps hard angles inside
+  /// what should have been curves, set it low and true curves get faceted.
   static List<StrokePoint> smooth(
     List<StrokePoint> points, {
     int samplesPerSegment = 12,
+    double cornerThresholdRadians = 0.7,
   }) {
     if (points.length < 3 || samplesPerSegment < 1) {
       return List<StrokePoint>.unmodifiable(points);
     }
 
+    final output = <StrokePoint>[];
+    for (final run in _cornerRuns(points, cornerThresholdRadians)) {
+      if (output.isNotEmpty) output.removeLast();
+      output.addAll(
+        run.length < 3
+            ? run
+            : _splineRun(run, samplesPerSegment: samplesPerSegment),
+      );
+    }
+
+    return List<StrokePoint>.unmodifiable(output);
+  }
+
+  /// Splits [points] into runs that each end on a corner, sharing that corner
+  /// vertex between the run before and the run after it.
+  static List<List<StrokePoint>> _cornerRuns(
+    List<StrokePoint> points,
+    double threshold,
+  ) {
+    if (threshold <= 0) return [points];
+
+    final corners = <int>[];
+    for (var i = 1; i < points.length - 1; i++) {
+      final before = points[i].position - points[i - 1].position;
+      final after = points[i + 1].position - points[i].position;
+      if (before.isZero || after.isZero) continue;
+      final cosine = (before.dot(after)) / (before.magnitude * after.magnitude);
+      if (math.acos(cosine.clamp(-1.0, 1.0)) >= threshold) corners.add(i);
+    }
+
+    if (corners.isEmpty) return [points];
+
+    final runs = <List<StrokePoint>>[];
+    var start = 0;
+    for (final corner in corners) {
+      runs.add(points.sublist(start, corner + 1));
+      start = corner;
+    }
+    runs.add(points.sublist(start));
+    return runs;
+  }
+
+  /// Catmull-Rom through one run, with reflected end control points so the
+  /// first and last segments do not droop.
+  static List<StrokePoint> _splineRun(
+    List<StrokePoint> points, {
+    required int samplesPerSegment,
+  }) {
     final extended = <StrokePoint>[
       _reflect(points[0], points[1]),
       ...points,
@@ -78,8 +140,7 @@ abstract final class StrokeConditioner {
         );
       }
     }
-
-    return List<StrokePoint>.unmodifiable(output);
+    return output;
   }
 
   /// Ramer-Douglas-Peucker simplification, with [tolerance] in normalized
@@ -128,23 +189,39 @@ abstract final class StrokeConditioner {
     ]);
   }
 
-  /// Thin, then simplify, then smooth.
+  /// Thin, then smooth, then simplify.
   ///
-  /// This is the standard entry point when a stroke is finalized. Thinning
-  /// first keeps the RDP pass cheap, and smoothing last means the rendered
-  /// curve passes through the simplified polyline's vertices.
+  /// The order is load-bearing and was originally the reverse, which turned
+  /// every sharp direction change into a loop.
+  ///
+  /// Simplifying *before* smoothing is destructive. Ramer-Douglas-Peucker
+  /// collapses a straight run to its two endpoints, so a mark that turns one
+  /// corner reaches the spline as just three points: start, corner, end. No
+  /// spline through three widely spaced points can turn sharply without bulging
+  /// outward, so a clean 90-degree corner came out as a 151-degree reversal
+  /// straying ~3% of page width away from the path the finger actually took -
+  /// the "rope" look. Reducing the tolerance does not help: a straight run
+  /// collapses at any tolerance, so there is no setting that preserves it.
+  ///
+  /// Smoothing first keeps every thinned vertex as a spline control point, so a
+  /// corner is a shape the spline reproduces rather than one it has to invent.
+  /// The simplify pass then runs on the spline *output*, which really is smooth,
+  /// so its tolerance discards only the redundant dense samples that smoothing
+  /// just added and leaves genuine curvature alone. It also keeps storage down:
+  /// the `samplesPerSegment` densification is undone again before anything is
+  /// persisted.
   static List<StrokePoint> finalize(
     List<StrokePoint> points, {
     required double minDistance,
     required double simplifyTolerance,
     int samplesPerSegment = 12,
   }) {
-    return smooth(
-      simplify(
+    return simplify(
+      smooth(
         thin(points, minDistance: minDistance),
-        tolerance: simplifyTolerance,
+        samplesPerSegment: samplesPerSegment,
       ),
-      samplesPerSegment: samplesPerSegment,
+      tolerance: simplifyTolerance,
     );
   }
 

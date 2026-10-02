@@ -56,6 +56,21 @@ class NormalizedPoint {
     return math.sqrt(dx * dx + dy * dy);
   }
 
+  /// This point minus [other], as a vector.
+  ///
+  /// Used by the stroke geometry to measure the direction change between
+  /// consecutive legs, which is how corners are told apart from curve samples.
+  NormalizedPoint operator -(NormalizedPoint other) =>
+      NormalizedPoint(x - other.x, y - other.y);
+
+  /// Dot product, used with [magnitude] to get the cosine of the angle between
+  /// two legs.
+  double dot(NormalizedPoint other) => x * other.x + y * other.y;
+
+  double get magnitude => math.sqrt(x * x + y * y);
+
+  bool get isZero => x == 0 && y == 0;
+
   NormalizedPoint lerp(NormalizedPoint other, double t) => NormalizedPoint(
     x + (other.x - x) * t,
     y + (other.y - y) * t,

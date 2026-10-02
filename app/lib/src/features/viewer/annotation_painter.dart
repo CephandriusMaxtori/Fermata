@@ -112,31 +112,33 @@ class AnnotationPainter extends CustomPainter {
     _paintPoints(canvas, stroke.points, paint);
   }
 
-  void _paintPoints(Canvas canvas, List<StrokePoint> points, Paint paint) {
-    final path = Path()..moveTo(_x(points[0]), _y(points[0]));
-
-    // Quadratic segments through stroke midpoints: the point list is already
-    // Catmull-Rom sampled by StrokeConditioner, so a plain polyline is smooth
-    // and this only removes any residual faceting.
-    for (var i = 1; i < points.length - 1; i++) {
-      final current = _toOffset(points[i].position, size);
-      final next = _toOffset(points[i + 1].position, size);
-      path.quadraticBezierTo(
-        current.dx,
-        current.dy,
-        (current.dx + next.dx) / 2,
-        (current.dy + next.dy) / 2,
-      );
+  /// The path a stroke's points describe.
+  ///
+  /// Exposed rather than kept inline in [paint] so the geometry is testable
+  /// without a live canvas, which is what pins that ink stays inside the box it
+  /// was drawn in. A plain polyline, deliberately: [StrokeConditioner.finalize]
+  /// already splines the stroke and samples the result densely, so there is no
+  /// faceting left to hide.
+  ///
+  /// This used to run quadratics through the midpoints of consecutive points "to
+  /// remove residual faceting", but that is a *fourth* smoothing pass and it
+  /// undoes corner preservation: cutting every vertex by a fixed fraction
+  /// regardless of the angle turned a 90-degree corner into 26 degrees and
+  /// threw the ink up to 9% of page width off the mark. A pen line is allowed to
+  /// have corners.
+  static Path pathFor(List<StrokePoint> points, Size size) {
+    final path = Path();
+    if (points.isEmpty) return path;
+    path.moveTo(points.first.position.x * size.width, points.first.position.y * size.height);
+    for (var i = 1; i < points.length; i++) {
+      path.lineTo(points[i].position.x * size.width, points[i].position.y * size.height);
     }
-
-    final last = _toOffset(points.last.position, size);
-    path.lineTo(last.dx, last.dy);
-    canvas.drawPath(path, paint);
+    return path;
   }
 
-  double _x(StrokePoint point) => point.position.x * size.width;
-
-  double _y(StrokePoint point) => point.position.y * size.height;
+  void _paintPoints(Canvas canvas, List<StrokePoint> points, Paint paint) {
+    canvas.drawPath(pathFor(points, size), paint);
+  }
 
   Offset _toOffset(NormalizedPoint point, Size box) =>
       Offset(point.x * box.width, point.y * box.height);

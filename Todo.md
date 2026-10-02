@@ -115,6 +115,33 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
 - [ ] Text/stamp vocabulary is unreachable end-to-end: `AnnotationKind.text`/`.stamp` and the
   `textContent`/`anchorX`/`anchorY` columns exist, but `_strokeCompanion` never writes them and
   `_toStroke` never reads them. Expected — that's M4.
+- [x] **Pen output read as "rope" instead of ink** (issue #1). Ink was smoothed *four* times over, and in
+      an order that destroys the shape it is smoothing. Three compounding causes, all fixed:
+
+  1. `finalize` ran simplify **before** smooth, so RDP collapsed a straight leg to its two endpoints and
+     a right-angle mark reached the spline as just three points. No spline through three widely spaced
+     points can turn sharply without bulging outward: a 90° corner came out as a **151° reversal**
+     straying ~3 % of page width (~17 pt on A4) off the finger's path. Swapped to thin → smooth →
+     simplify. Lowering the tolerance does *not* help — a straight leg collapses at any tolerance.
+  2. Catmull-Rom has a continuous tangent at every control point, so it cannot represent a corner even
+     once the order is fixed; the 90° turn still smeared to ~24°. `smooth` now breaks the spline into
+     runs at vertices turning more than `cornerThresholdRadians` (0.7) and emits each corner vertex
+     exactly once, unblurred. Real handwriting curve samples turn ~0.008–0.2 rad, so the threshold has
+     an order of magnitude of headroom; it is the one tuning knob here.
+  3. `AnnotationPainter` then smoothed a *fourth* time, drawing quadratics through the midpoints of
+     consecutive points "to remove residual faceting" the conditioning pass had already removed. That
+     cut every vertex by a fixed fraction regardless of angle: the 90° corner reached the screen as
+     26°, and a mark spanning x 200–500 drew out to x 522. It is now a plain polyline.
+
+  Net effect on a 90° drag: 151° reversal → 90° corner, and ink stays inside the box it was drawn in.
+  Pinned by `stroke_conditioner_test.dart` (corner stays sharp, curve is not faceted, no bulge on either
+  leg, never strays from the finger's path) and `app/test/annotation_painter_test.dart`, which is new —
+  there was previously **no** test asserting anything about what the painter puts on screen.
+
+  Two pre-existing tests used 90°-turning V shapes to stand in for "a curve". Those are corners by any
+  reading and are now left sharp on purpose, so both were re-based on real arcs; they now state what they
+  meant to test. `pathFor` is static and public purely so paint geometry is testable without a canvas,
+  and `_paintPoints` is its only caller.
 - [ ] Minor: unused `dart:async` import (`library_screen.dart:1`); dead `await makeScores(database)`
   (`storage_test.dart:269`); unused `FakePdfPageCounter` (`storage_test.dart:38`);
   `MidiFiles.linkedScoreId` FK is one-way, so deleting a MIDI leaves a dangling
@@ -162,10 +189,12 @@ Substantially **done**. Remaining:
 The hard part is built and well tested; what's missing is correctness at the seams.
 
 - [x] `NormalizedPoint` + `PageGeometry`, pixel round-trip tested to `1e-9`
-- [x] `StrokeConditioner` — thin → simplify (RDP) → smooth (Catmull-Rom), pure Dart, well tested
+- [x] `StrokeConditioner` — thin → smooth (Catmull-Rom, corner-preserving) → simplify (RDP), pure Dart,
+      well tested. **Order and corner handling changed** — see Bugs, issue #1
 - [x] Annotation persistence: compact 1/10000-integer JSON, pinned by test
 - [x] `AnnotationPainter` — two-pass (highlighter under pen, `BlendMode.multiply`), `CustomPaint` in a
-      `Stack` sharing the page's box, `RepaintBoundary`
+      `Stack` sharing the page's box, `RepaintBoundary`. Draws a plain polyline via `pathFor`; it used
+      to smooth a fourth time with quadratics through midpoints — see Bugs, issue #1
 - [x] Pen + highlighter, 2 palettes, width slider (0.1 %–3 % of page width)
 - [x] Live stroke held outside the DB, committed on finger-lift
 - [!] Fix alignment bug (gesture vs paint box) — see Bugs

@@ -1,3 +1,5 @@
+import 'dart:math' show atan2, min, pi;
+
 import 'package:fermata_core/fermata_core.dart';
 import 'package:test/test.dart';
 
@@ -8,6 +10,35 @@ List<StrokePoint> pointsFrom(List<(double, double)> coords) => [
 
 List<double> xsOf(List<StrokePoint> points) =>
     points.map((p) => p.position.x).toList();
+
+/// Turn in degrees between the leg arriving at [at] and the leg leaving it.
+double _angleBetween(NormalizedPoint before, NormalizedPoint at, NormalizedPoint after) {
+  final incoming = atan2(at.y - before.y, at.x - before.x);
+  final outgoing = atan2(after.y - at.y, after.x - at.x);
+  var degrees = (outgoing - incoming).abs() * 180 / pi;
+  if (degrees > 180) degrees = 360 - degrees;
+  return degrees;
+}
+
+/// Shortest distance from [point] to the polyline through [points].
+double _distanceToPolyline(NormalizedPoint point, List<StrokePoint> points) {
+  var nearest = double.infinity;
+  for (var i = 1; i < points.length; i++) {
+    final a = points[i - 1].position;
+    final b = points[i].position;
+    final dx = b.x - a.x;
+    final dy = b.y - a.y;
+    final lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared == 0) {
+      nearest = min(nearest, point.distanceTo(a));
+      continue;
+    }
+    var t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSquared;
+    t = t.clamp(0.0, 1.0);
+    nearest = min(nearest, point.distanceTo(NormalizedPoint(a.x + t * dx, a.y + t * dy)));
+  }
+  return nearest;
+}
 
 void main() {
   group('StrokeConditioner.thin', () {
@@ -95,9 +126,14 @@ void main() {
     });
 
     test('produces a denser point list than it was given', () {
+      // A curve, not an angle. A peak like (0,0) -> (0.5,0.5) -> (1,0) turns
+      // 90 degrees and is deliberately treated as two straight runs joined at a
+      // corner, so it is covered by the corner tests instead.
       final input = pointsFrom(const [
         (0, 0),
-        (0.5, 0.5),
+        (0.25, 0.217),
+        (0.5, 0.309),
+        (0.75, 0.217),
         (1, 0),
       ]);
 
@@ -154,7 +190,7 @@ void main() {
   });
 
   group('StrokeConditioner.finalize', () {
-    test('runs thin, simplify and smooth in that order', () {
+    test('reduces a dead-straight drag to its two endpoints', () {
       final input = pointsFrom(const [
         (0, 0.5),
         (0.0001, 0.5),
@@ -184,11 +220,14 @@ void main() {
     });
 
     test('keeps a curved drag as a smooth dense run', () {
+      // A shallow arc. The V shapes used here previously turned ~90 degrees per
+      // vertex, which is a corner by any reading and is now left sharp on
+      // purpose, so the "stays dense" claim is made with an actual curve.
       final input = pointsFrom(const [
         (0, 0.5),
-        (0.25, 0.1),
-        (0.5, 0.5),
-        (0.75, 0.9),
+        (0.25, 0.376),
+        (0.5, 0.309),
+        (0.75, 0.376),
         (1, 0.5),
       ]);
 
@@ -202,6 +241,140 @@ void main() {
       expect(result.length, greaterThan(input.length));
       expect(result.first.position.x, closeTo(0, 1e-9));
       expect(result.last.position.x, closeTo(1, 1e-9));
+    });
+
+    test('keeps a right-angle corner instead of looping past it', () {
+      // Issue #1, "Pen tool is a lasso.": simplifying before smoothing collapsed
+      // a two-leg mark to three points, and the spline through them inverted
+      // the corner into a 151-degree reversal. Smoothing before simplifying
+      // keeps the corner as a control point.
+      final input = pointsFrom(const [
+        (0.2, 0.2),
+        (0.35, 0.2),
+        (0.5, 0.2),
+        (0.5, 0.4),
+        (0.5, 0.6),
+      ]);
+
+      final result = StrokeConditioner.finalize(
+        input,
+        minDistance: 0.002,
+        simplifyTolerance: 0.0015,
+      );
+
+      // Turn between the incoming and outgoing directions at the corner. The
+      // two legs are perpendicular, so this should stay near 90.
+      final cornerIndex = result.indexWhere(
+        (p) =>
+            p.position.x >= 0.499 && p.position.x <= 0.501 && p.position.y <= 0.4,
+      );
+      expect(cornerIndex, greaterThan(0));
+      expect(cornerIndex, lessThan(result.length - 1));
+
+      final before = result[cornerIndex - 1].position;
+      final at = result[cornerIndex].position;
+      final after = result[cornerIndex + 1].position;
+      final turn = _angleBetween(before, at, after);
+
+      expect(turn, greaterThan(75));
+      expect(turn, lessThan(105));
+    });
+
+    test('leaves a smooth curve smooth rather than faceting it', () {
+      // The cost of corner preservation: a threshold low enough to keep a stem
+      // sharp must not chop a genuine curve into straight chords. A tight but
+      // continuous arc has per-vertex turns an order of magnitude below the
+      // default threshold, so it has to survive intact.
+      final input = pointsFrom(const [
+        (0, 0.5),
+        (0.25, 0.376),
+        (0.5, 0.309),
+        (0.75, 0.376),
+        (1, 0.5),
+      ]);
+
+      final result = StrokeConditioner.finalize(
+        input,
+        minDistance: 0.002,
+        simplifyTolerance: 0.0015,
+      );
+
+      // Still densified from the five input points...
+      expect(result.length, greaterThan(input.length));
+      // ...and still hugging the arc, not inscribed in it as a polyline would be.
+      for (final point in input) {
+        expect(
+          _distanceToPolyline(point.position, result),
+          lessThan(0.01),
+          reason: 'a smooth curve was faceted into straight chords',
+        );
+      }
+    });
+
+    test('keeps a corner sharp without a stray bulge on either side', () {
+      // A corner that survives by simply inserting a loop is not a corner. The
+      // runs either side of it must stay straight, which for these two legs
+      // means every point on the horizontal leg has the same y.
+      final result = StrokeConditioner.finalize(
+        pointsFrom(const [
+          (0.2, 0.2),
+          (0.35, 0.2),
+          (0.5, 0.2),
+          (0.5, 0.4),
+          (0.5, 0.6),
+        ]),
+        minDistance: 0.002,
+        simplifyTolerance: 0.0015,
+      );
+
+      final onHorizontalLeg = result.where((p) => p.position.x < 0.49);
+      expect(onHorizontalLeg, isNotEmpty);
+      for (final point in onHorizontalLeg) {
+        expect(
+          point.position.y,
+          closeTo(0.2, 0.005),
+          reason: 'the leg before the corner bulged away from straight',
+        );
+      }
+
+      final onVerticalLeg = result.where((p) => p.position.y > 0.25);
+      expect(onVerticalLeg, isNotEmpty);
+      for (final point in onVerticalLeg) {
+        expect(
+          point.position.x,
+          closeTo(0.5, 0.005),
+          reason: 'the leg after the corner bulged away from straight',
+        );
+      }
+    });
+
+    test('never strays far from the path the finger took', () {
+      // The "rope" symptom in numbers: the rendered mark sat up to 3% of page
+      // width off the input on a straight-leged mark, which on A4 is ~17pt of
+      // bulge. Ink should stay on the finger's path.
+      final input = pointsFrom(const [
+        (0.2, 0.2),
+        (0.3, 0.2),
+        (0.4, 0.2),
+        (0.5, 0.2),
+        (0.5, 0.35),
+        (0.5, 0.5),
+        (0.5, 0.6),
+      ]);
+
+      final result = StrokeConditioner.finalize(
+        input,
+        minDistance: 0.002,
+        simplifyTolerance: 0.0015,
+      );
+
+      for (final point in input) {
+        expect(
+          _distanceToPolyline(point.position, result),
+          lessThan(0.01),
+          reason: 'finalize pushed ink away from where it was drawn',
+        );
+      }
     });
   });
 
