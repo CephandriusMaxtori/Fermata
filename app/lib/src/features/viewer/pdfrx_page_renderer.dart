@@ -138,7 +138,7 @@ class PdfrxPageRenderer implements PageRenderer {
       final text = await pdfPage.loadText();
       layout = text == null
           ? BarLayout.empty
-          : BarDetector.detect(_textRuns(text, geometry));
+          : BarDetector.detect(textRunsFrom(text, geometry));
     } on Object {
       // A page that cannot be parsed for text is simply a page without bars.
       // Letting this throw would take the whole viewer down over a navigation
@@ -149,18 +149,13 @@ class PdfrxPageRenderer implements PageRenderer {
     return _barLayouts[page.id] = layout;
   }
 
-  /// Converts pdfrx character boxes into normalized [TextRun]s.
-  ///
-  /// This is the only place in the app that knows PDF's bottom-left origin and
-  /// its inverted vertical edges; [NormalizedRect.fromPdfEdges] absorbs the
-  /// flip so no other file has to think about it.
-  ///
   /// Characters are grouped into runs on whitespace and on large horizontal
   /// jumps. Grouping matters because a barline gap is measured between *runs* of
   /// ink: passing single characters through would let the gap inside a word
   /// register as a barline. Run bounds are accumulated as the run grows rather
   /// than rescanning, so this stays linear in the character count.
-  static List<TextRun> _textRuns(PdfPageRawText text, PageGeometry geometry) {
+  @visibleForTesting
+  static List<TextRun> textRunsFrom(PdfPageRawText text, PageGeometry geometry) {
     final runs = <TextRun>[];
     var characters = StringBuffer();
     var bounds = NormalizedRect.empty;
@@ -176,23 +171,40 @@ class PdfrxPageRenderer implements PageRenderer {
 
     for (var i = 0; i < text.charRects.length && i < text.fullText.length; i++) {
       final rect = text.charRects[i];
-      if (rect.isEmpty) continue;
 
-      final charBounds = NormalizedRect.fromPdfEdges(
+      final charBounds = rect.isEmpty
+          ? null
+          : NormalizedRect.fromPdfEdges(
         left: rect.left / geometry.widthPt,
         right: rect.right / geometry.widthPt,
         top: rect.top / geometry.heightPt,
         bottom: rect.bottom / geometry.heightPt,
       ).clamp();
-      if (charBounds.isEmpty) continue;
 
       final char = text.fullText[i];
+
+      // A character with no usable box ends the current run rather than being
+      // silently skipped. Skipping it would shift every later character against
+      // the wrong rect, and the run would end up straddling two unrelated parts
+      // of the page.
+      if (charBounds == null) {
+        flush();
+        previousRight = double.negativeInfinity;
+        continue;
+      }
+
       final jumped = previousRight.isFinite &&
           charBounds.left - previousRight > kRunGap;
 
       if (char.trim().isEmpty || jumped) {
         flush();
-        if (char.trim().isEmpty) continue;
+        // Whitespace ends the run but is never itself ink. A big horizontal jump
+        // does end it, and the character that caused it does belong to the new
+        // run, so it falls through to be written below.
+        if (char.trim().isEmpty) {
+          previousRight = double.negativeInfinity;
+          continue;
+        }
       }
 
       characters.write(char);

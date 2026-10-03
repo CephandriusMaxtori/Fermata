@@ -99,23 +99,30 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
 
   /// [_barLayouts] in page order, for [BarNavigator].
   ///
-  /// Missing entries are treated as staff-less rather than skipped, so the
-  /// indices in a cursor line up with the page indices.
+  /// Indexed by position rather than looked up by [ScorePage.indexOf]: the pages
+  /// list is already in order, and `indexOf` compares by value, so two identical
+  /// pages would resolve to the first one every time.
   List<BarLayout> _orderedLayouts(List<ScorePage> pages) => [
-    for (final page in pages)
-      _barLayouts[pages.indexOf(page)] ?? BarLayout.empty,
+    for (var i = 0; i < pages.length; i++)
+      _barLayouts[i] ?? BarLayout.empty,
   ];
 
   /// The current page's bars.
   BarLayout _currentLayout(List<ScorePage> pages) =>
       _barLayouts[_currentPage] ?? BarLayout.empty;
 
-  /// Scrolls the page so [cursor]'s bar is in view.
+  /// Scrolls so [cursor]'s bar is the music in view.
   ///
-  /// The bar's left edge is what gets aligned, so a step always puts the music
-  /// you are about to read at the same place on the screen. Resetting the zoom
-  /// first matters: bar positions are page fractions, so an inherited pinch would
-  /// scroll to the wrong offset.
+  /// Both axes matter and they are coupled. Horizontally the bar's *left* edge
+  /// is aligned to the left of the screen, so every step lands the music you are
+  /// about to read in the same place. Vertically the *system* the bar is in is
+  /// brought near the top, because a step that crosses into the next system of
+  /// the same page has to move the view at all — the bar itself may already be
+  /// on screen.
+  ///
+  /// The transform is rebuilt from identity rather than composed onto the
+  /// current one: bar positions are page fractions, so a leftover pinch would
+  /// scale the offset into the wrong place, and a leftover drag would compound.
   void _scrollToCursor(List<ScorePage> pages) {
     final layout = _currentLayout(pages);
     if (_cursor.systemIndex >= layout.systems.length) return;
@@ -125,12 +132,28 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
     final size = context.size;
     if (size == null || size.isEmpty) return;
 
-    // Fraction of the page the bar starts at, mapped into the viewport. The
-    // page fills the viewport at rest, so the fraction *is* the offset — but
-    // clamped so a bar in the right-hand margin cannot scroll the page away.
+    // The page is letterboxed into the viewport, so a fraction of the *page* is
+    // not a fraction of the *screen*. Clamping to the viewport is what stops a
+    // bar in the right-hand margin from scrolling the page off screen.
     final dx = (range.start * size.width).clamp(0.0, size.width);
+    final dy = (system.bounds.top * size.height).clamp(0.0, size.height);
     _transformController.value =
-        Matrix4.identity()..translateByDouble(dx, 0, 0, 1);
+        Matrix4.identity()..translateByDouble(dx, dy, 0, 1);
+  }
+
+  /// Switches between page stepping and bar stepping.
+  ///
+  /// Turning bar mode *on* resets the cursor to the start of the score: the
+  /// layouts may have just been discovered, and carrying a cursor from a previous
+  /// session's guess would put the first bar step somewhere arbitrary. Turning
+  /// it off keeps the cursor, so switching back resumes where the user was.
+  void _toggleBarMode() {
+    final enabling = !(_barMode ?? false);
+    setState(() {
+      _barMode = enabling ? true : false;
+      if (enabling) _cursor = BarCursor.start;
+    });
+    if (enabling) _transformController.value = Matrix4.identity();
   }
 
   void _stepBar(int delta, List<ScorePage> pages) {
@@ -215,6 +238,7 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
                 onStepBar: (delta) => _stepBar(delta, pages),
                 onJump: _jumpTo,
                 onDetect: () => _detectBars(pages),
+                onToggleMode: _toggleBarMode,
               ),
         orElse: () => null,
       ),
@@ -319,6 +343,7 @@ class _ViewerFooter extends ConsumerWidget {
     required this.onStepBar,
     required this.onJump,
     required this.onDetect,
+    required this.onToggleMode,
   });
 
   final int currentPage;
@@ -333,6 +358,7 @@ class _ViewerFooter extends ConsumerWidget {
   final ValueChanged<int> onStepBar;
   final ValueChanged<int> onJump;
   final VoidCallback onDetect;
+  final VoidCallback onToggleMode;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -354,6 +380,7 @@ class _ViewerFooter extends ConsumerWidget {
               onStepBar: onStepBar,
               onJumpToPage: onJump,
               onDetect: onDetect,
+              onToggleMode: onToggleMode,
             ),
     );
   }

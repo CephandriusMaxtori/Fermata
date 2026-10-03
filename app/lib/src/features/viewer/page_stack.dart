@@ -96,17 +96,7 @@ final pageRendererProvider = FutureProvider.autoDispose<PageRenderer>((
   return renderer;
 });
 
-/// The bars of one page, or an empty layout when it has no staff.
-///
-/// A future, not a stream: bar positions are a property of the file and do not
-/// change under the user, so there is nothing to watch. While annotating, the
-/// navigation controls are hidden anyway — stepping bars while inking would move
-/// the page out from under the pen.
-final barsForPageProvider = FutureProvider.autoDispose
-    .family<BarLayout, ScorePage>((ref, page) async {
-      final renderer = await ref.watch(pageRendererProvider.future);
-      return renderer.barLayout(page);
-    });
+
 
 /// Paged view of a score, with pan and zoom wrapping the whole thing.
 class PageStack extends ConsumerWidget {

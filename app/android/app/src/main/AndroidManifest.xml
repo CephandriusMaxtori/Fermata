@@ -2,7 +2,7 @@
     <application
         android:label="fermata"
         android:name="${applicationName}"
-        android:icon="@mipmap/true">
+        android:icon="@mipmap/ic_launcher_new">
         <activity
             android:name=".MainActivity"
             android:exported="true"

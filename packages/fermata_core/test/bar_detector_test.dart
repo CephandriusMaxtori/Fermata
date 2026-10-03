@@ -206,17 +206,47 @@ void main() {
 
   group('NormalizedRect', () {
     test('normalises PDF edges whichever way round they arrive', () {
-      // PDF reports top > bottom because its origin is bottom-left. Normalizing
-      // here is why every other file in this package can assume top < bottom.
+      // pdfrx asserts top >= bottom, so this ordering never actually reaches us
+      // today. It is pinned anyway because the guarantee is the engine's, not
+      // ours: a negative height would corrupt every measurement downstream, and
+      // the failure would look like bad detection rather than a coordinate bug.
       final a = NormalizedRect.fromPdfEdges(
-          left: 1, right: 2, top: 30, bottom: 20);
+          left: 0.1, right: 0.2, top: 0.3, bottom: 0.2);
       final b = NormalizedRect.fromPdfEdges(
-          left: 1, right: 2, top: 20, bottom: 30);
+          left: 0.1, right: 0.2, top: 0.2, bottom: 0.3);
 
       expect(a, b);
-      expect(a.top, 20);
-      expect(a.bottom, 30);
-      expect(a.height, 10);
+      expect(a.top, closeTo(0.70, 1e-9));
+      expect(a.bottom, closeTo(0.80, 1e-9));
+      expect(a.height, closeTo(0.10, 1e-9));
+    });
+
+    test('flips PDF\'s bottom-left origin, not just the edge order', () {
+      // y 900..950 on a 1000pt page is the top 5%, so it must come out as
+      // 0.05..0.10. Reordering without flipping yields 0.90..0.95, which is
+      // wrong in a way that looks like bad detection rather than a coordinate
+      // bug — every bar lands on the wrong system of the page.
+      final rect = NormalizedRect.fromPdfEdges(
+        left: 0.1,
+        right: 0.2,
+        top: 0.95,
+        bottom: 0.90,
+      );
+
+      expect(rect.top, closeTo(0.05, 1e-9));
+      expect(rect.bottom, closeTo(0.10, 1e-9));
+    });
+
+    test('preserves horizontal position, which is not flipped', () {
+      final rect = NormalizedRect.fromPdfEdges(
+        left: 0.25,
+        right: 0.75,
+        top: 0.95,
+        bottom: 0.90,
+      );
+
+      expect(rect.left, 0.25);
+      expect(rect.right, 0.75);
     });
 
     test('clamp keeps edges inside the page', () {

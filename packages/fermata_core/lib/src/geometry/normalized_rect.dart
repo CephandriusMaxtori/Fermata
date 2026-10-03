@@ -30,20 +30,37 @@ class NormalizedRect {
   /// forbid.
   static const NormalizedRect zero = NormalizedRect(0, 0, 0, 0);
 
-  /// Builds a rect from any ordering of its vertical edges.
+  /// Builds a rect from PDF page coordinates **as fractions of the page**.
   ///
-  /// PDF rects report [PdfRect.top] >= [PdfRect.bottom]; this normalises them.
+  /// Not merely "the same rect with its edges ordered". Two things happen here,
+  /// and doing only the first is a bug that still looks plausible:
+  ///
+  ///  1. The vertical axis is flipped. PDF's origin is bottom-left with y
+  ///     increasing upward, so a box at y 0.90..0.95 is at the *top* of the page,
+  ///     not 90% of the way down.
+  ///  2. The vertical edges are ordered defensively. `PdfRect` asserts
+  ///     `top >= bottom`, so through pdfrx this half is a no-op; it is here so
+  ///     that a second source, or a patched engine, cannot produce a negative
+  ///     height that would silently corrupt every measurement downstream.
+  ///
+  /// Flipping is why this is the only place in the app that touches a `PdfRect`.
+  /// A box that is reordered but not flipped puts every bar on the wrong system
+  /// of the page, and that reads as bad detection rather than a coordinate bug.
+  ///
+  /// Callers must divide points by the page size first — this type is fractions
+  /// throughout, and scaling belongs to the one caller that knows the geometry.
   factory NormalizedRect.fromPdfEdges({
     required double left,
     required double right,
     required double top,
     required double bottom,
-  }) => NormalizedRect(
-    left,
-    top < bottom ? top : bottom,
-    right,
-    top < bottom ? bottom : top,
-  );
+  }) {
+    // In PDF space the smaller y is nearer the bottom of the page, so it becomes
+    // the *larger* page fraction once flipped.
+    final nearBottom = top < bottom ? top : bottom;
+    final nearTop = top < bottom ? bottom : top;
+    return NormalizedRect(left, 1 - nearTop, right, 1 - nearBottom);
+  }
 
   final double left;
   final double top;

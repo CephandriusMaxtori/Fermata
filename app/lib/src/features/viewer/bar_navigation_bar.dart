@@ -27,6 +27,7 @@ class BarNavigationBar extends StatelessWidget {
     required this.onStepBar,
     required this.onJumpToPage,
     required this.onDetect,
+    required this.onToggleMode,
   });
 
   /// Zero-based index of the page on screen.
@@ -43,6 +44,14 @@ class BarNavigationBar extends StatelessWidget {
   final ValueChanged<int> onStepBar;
   final ValueChanged<int> onJumpToPage;
   final VoidCallback onDetect;
+
+  /// Swaps between page stepping and bar stepping.
+  ///
+  /// Separate from [onStepPage] on purpose: this is a mode change, not a step,
+  /// and folding it into a step callback would mean passing a magic delta that
+  /// means "step nowhere and switch" — the kind of overload that reads as a bug
+  /// later.
+  final VoidCallback onToggleMode;
 
   @override
   Widget build(BuildContext context) {
@@ -105,7 +114,7 @@ class BarNavigationBar extends StatelessWidget {
                 )
               else
                 TextButton.icon(
-                  onPressed: () => onStepPage(0),
+                  onPressed: onToggleMode,
                   icon: Icon(
                     bars
                         ? Icons.horizontal_rule_rounded
