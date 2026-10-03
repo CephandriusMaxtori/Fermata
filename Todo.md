@@ -142,6 +142,23 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
   reading and are now left sharp on purpose, so both were re-based on real arcs; they now state what they
   meant to test. `pathFor` is static and public purely so paint geometry is testable without a canvas,
   and `_paintPoints` is its only caller.
+- [x] **`mipmap-*/true.png` could not build — APK step was red on `main`** (found by CI, fixed with
+  issue #2). `pubspec.yaml:49` had `android: "true"` under `flutter_launcher_icons`. That key is the
+  *launcher resource name*, not a flag; the tool dutifully emitted `mipmap-{m,h,xh,xxh,xxxh}dpi/true.png`
+  plus `mipmap-anydpi-v26/true.xml`, and the resource merger rejects `true` as a reserved Java keyword.
+  The artwork was fine — only the name was wrong. Renamed to `ic_launcher_new`, `AndroidManifest.xml:5`
+  repointed. **Worth remembering: `flutter_launcher_icons.android` is a name, and a bool there will
+  build a launcher called `true` or `false`.**
+- [x] **Three bugs in the bar-detection path**, found while writing its tests (issue #2):
+  - `NormalizedRect.fromPdfEdges` ordered the vertical edges but **never flipped the axis**. PDF's origin
+  is bottom-left, so a box at y 0.90..0.95 is the *top* of the page. Un-flipped, every bar landed on the
+  wrong system and it reads as bad detection rather than a coordinate bug.
+  - `BarDetector._joins` tested `NormalizedRect.overlapArea`. The glyphs of a staff sit *side by side*
+  horizontally and never overlap at all, so the second glyph of a row failed to join the first and every
+  run became its own single-glyph band — no systems, no bars, silently. It now tests *vertical* overlap
+  relative to the shorter box, which is the axis a system is defined along.
+  - A degenerate glyph box was `continue`d in place instead of ending the run, so every later character
+  was paired against the wrong rect (`abc` came out as `ac`). It now flushes the run.
 - [ ] Minor: unused `dart:async` import (`library_screen.dart:1`); dead `await makeScores(database)`
   (`storage_test.dart:269`); unused `FakePdfPageCounter` (`storage_test.dart:38`);
   `MidiFiles.linkedScoreId` FK is one-way, so deleting a MIDI leaves a dangling
@@ -172,6 +189,48 @@ Substantially **done**. Remaining:
 - [ ] Thumbnails — `_Thumbnail` (`score_card.dart:135-173`) is a permanent placeholder; it never reads
       `score.thumbnailPath`. Generation is outstanding.
 - [ ] Tag / setlist filters — blocked behind M6 (see `applyScoreQuery` bug above)
+
+### M2b — Bar-by-bar navigation (issue #2)
+
+Built. Tapping the page's outer thirds, or the chevrons, steps **one bar** instead of one page once bar
+mode is on. Opt-in via a "Find bars" control rather than automatic:
+
+  - Detection reads the text layer of **every** page up front. Stepping backwards off the front of a
+    page has to know the last bar of the page before it, so discovering layouts lazily would leave a
+  - control enabled that does nothing.
+  - A score with no text layer finds nothing, so auto-running would make every scan pay a wait for no
+    benefit. When detection finds no staff, the viewer stays page-based and the page picker says
+    "No bars detected" rather than pretending.
+
+**The honest limitation, stated once here:** barlines are drawn strokes, not characters.
+`PdfPage.loadText` returns glyph boxes, so a barline is visible only as a gap where glyphs are absent.
+`BarDetector` treats gaps wider than the system's median gap as barlines. That works on clean
+digitally-engraved PDFs and **fails outright on a scan, a vector-only export, or a hand-typeset score
+with no text layer** — the last being the common case for printed music. This is a progressive
+enhancement, never a foundation.
+
+  - The exact answer is in the page's vector drawing operators. **pdfrx does not currently expose
+    them.** When it does, it should replace `fermata_core/lib/src/measure/` outright rather than be
+    merged in: "glyph gaps" and "actual strokes" are different sources of truth, and averaging them is
+    worse than either.
+
+  - Lyrics are excluded by requiring a band to be tall enough to hold several staff lines, which a line
+  of lyrics never is. A one-line title is excluded the same way.
+  - A system of *uniformly* spaced glyphs yields **one** bar, because no gap stands out. Inventing
+  barlines by dividing the row evenly would be worse than admitting there is one. Pinned by
+    `bar_detector_test.dart`, deliberately.
+
+Design notes worth keeping:
+
+  - `BarNavigator` carries `(page, system, bar)` rather than a flat index across the score. Layouts are
+    discovered per page and asynchronously, so a flat count has to be rebuilt whenever any page
+    finishes loading and the cursor re-based onto it. The triple makes a step "the next sibling of
+    where I already am" with no global index.
+  - Going **back** into a system lands on its *last* bar. Forward from bar 2 of system 1 reaches bar 1
+    of system 2, so coming back must arrive at bar 2 of system 1 — otherwise reverse stepping drifts
+    a bar per press, which is exactly how hands-free page turning comes to feel broken.
+  - The bar number is **omitted** when a preceding page has no staff. "Bar 4 of 12" that silently
+    skipped a page's worth of bars is a lie; the footer falls back to page numbers instead.
 
 ### M2 — Basic PDF viewer
 
