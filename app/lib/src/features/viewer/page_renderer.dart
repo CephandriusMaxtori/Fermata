@@ -25,6 +25,14 @@ abstract interface class PageRenderer {
     required double pixelRatio,
   });
 
+  /// Bar positions found in [page]'s text layer, or [BarLayout.empty].
+  ///
+  /// Deliberately on this interface rather than reaching for pdfrx directly in
+  /// the viewer: bar navigation has to be widget-testable, and [BarLayout.empty]
+  /// is the answer for every page without a usable text layer (a scan, a
+  /// vector-only export), which is a normal outcome rather than a failure.
+  Future<BarLayout> barLayout(ScorePage page);
+
   /// Drops any cached raster for [page].
   void evict(ScorePage page);
 

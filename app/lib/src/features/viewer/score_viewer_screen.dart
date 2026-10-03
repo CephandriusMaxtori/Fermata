@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/library_providers.dart';
 import '../library/library_screen.dart';
+import 'bar_navigation_bar.dart';
 import 'brush_toolbar.dart';
 import 'page_stack.dart';
 
@@ -27,11 +28,33 @@ class ScoreViewerScreen extends ConsumerStatefulWidget {
   ConsumerState<ScoreViewerScreen> createState() => _ScoreViewerScreenState();
 }
 
+/// Bar navigation is opt-in via a control rather than automatic on open.
+///
+/// Two reasons. Bar detection reads the text layer of every page up front, which
+/// is real work on a long score, and it has to happen before the first step can
+/// be trusted. And on a score with no text layer it finds nothing, so running it
+/// by default would mean every scan gets a "Looking for bars…" wait for no
+/// benefit. The viewer is page-based until asked otherwise.
 class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
   late final TransformationController _transformController;
   late final PageController _pageController;
   int _currentPage = 0;
   bool _drawingMode = false;
+
+  /// Whether the footer steps by bar instead of by page.
+  ///
+  /// Null until the first detection finishes, which is also how the footer knows
+  /// to show a spinner rather than claiming a bar count it does not have.
+  bool? _barMode;
+  BarCursor _cursor = BarCursor.start;
+
+  /// Bar layouts per page index, filled in as detection completes.
+  ///
+  /// Kept as a map rather than a list because pages arrive out of order and a
+  /// hole has to be distinguishable from "no staff on this page".
+  final Map<int, BarLayout> _barLayouts = {};
+
+  
 
   @override
   void initState() {
@@ -45,6 +68,91 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
     _transformController.dispose();
     _pageController.dispose();
     super.dispose();
+  }
+
+  /// Asks the renderer for each page's bars, filling [barMode] in when they all
+  /// answer.
+  ///
+  /// Deliberately all pages up front rather than the visible one on demand:
+  /// stepping backwards off the front of a page has to know the last bar of the
+  /// page before it, and discovering that only when the user steps back is how a
+  /// control ends up enabled but dead.
+  Future<void> _detectBars(List<ScorePage> pages) async {
+    final renderer = await ref.read(pageRendererProvider.future);
+    if (!mounted) return;
+
+    final layouts = <int, BarLayout>{};
+    for (final (index, page) in pages.indexed) {
+      layouts[index] = await renderer.barLayout(page);
+      if (!mounted) return;
+    }
+
+    _barLayouts
+      ..clear()
+      ..addAll(layouts);
+
+    setState(() {
+      _barMode = BarNavigator.isNavigable(_orderedLayouts(pages));
+      _cursor = BarCursor.start;
+    });
+  }
+
+  /// [_barLayouts] in page order, for [BarNavigator].
+  ///
+  /// Missing entries are treated as staff-less rather than skipped, so the
+  /// indices in a cursor line up with the page indices.
+  List<BarLayout> _orderedLayouts(List<ScorePage> pages) => [
+    for (final page in pages)
+      _barLayouts[pages.indexOf(page)] ?? BarLayout.empty,
+  ];
+
+  /// The current page's bars.
+  BarLayout _currentLayout(List<ScorePage> pages) =>
+      _barLayouts[_currentPage] ?? BarLayout.empty;
+
+  /// Scrolls the page so [cursor]'s bar is in view.
+  ///
+  /// The bar's left edge is what gets aligned, so a step always puts the music
+  /// you are about to read at the same place on the screen. Resetting the zoom
+  /// first matters: bar positions are page fractions, so an inherited pinch would
+  /// scroll to the wrong offset.
+  void _scrollToCursor(List<ScorePage> pages) {
+    final layout = _currentLayout(pages);
+    if (_cursor.systemIndex >= layout.systems.length) return;
+    final system = layout.systems[_cursor.systemIndex];
+    final range = system.barRange(_cursor.barIndex);
+
+    final size = context.size;
+    if (size == null || size.isEmpty) return;
+
+    // Fraction of the page the bar starts at, mapped into the viewport. The
+    // page fills the viewport at rest, so the fraction *is* the offset — but
+    // clamped so a bar in the right-hand margin cannot scroll the page away.
+    final dx = (range.start * size.width).clamp(0.0, size.width);
+    _transformController.value =
+        Matrix4.identity()..translateByDouble(dx, 0, 0, 1);
+  }
+
+  void _stepBar(int delta, List<ScorePage> pages) {
+    final layouts = _orderedLayouts(pages);
+    final next = delta > 0
+        ? BarNavigator.forward(_cursor, layouts)
+        : BarNavigator.back(_cursor, layouts);
+    if (next == _cursor) return;
+
+    final pageChanged = next.pageIndex != _cursor.pageIndex;
+    setState(() => _cursor = next);
+
+    if (pageChanged) {
+      _transformController.value = Matrix4.identity();
+      _pageController.animateToPage(
+        next.pageIndex,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+      return;
+    }
+    _scrollToCursor(pages);
   }
 
   @override
@@ -84,7 +192,7 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
               transformationController: _transformController,
               drawingMode: _drawingMode,
               onPageChanged: (index) => setState(() => _currentPage = index),
-              onTapZone: _onTapZone,
+              onTapZone: (zone) => _onTapZone(zone, value),
               onStrokeCompleted: _persistStroke,
             ),
             if (_drawingMode) const _DrawingHint(),
@@ -100,14 +208,20 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
                 currentPage: _currentPage,
                 pageCount: pages.length,
                 drawingMode: _drawingMode,
+                barMode: _barMode,
+                cursor: _cursor,
+                layouts: _orderedLayouts(pages),
                 onStep: _step,
+                onStepBar: (delta) => _stepBar(delta, pages),
                 onJump: _jumpTo,
+                onDetect: () => _detectBars(pages),
               ),
         orElse: () => null,
       ),
     );
   }
 
+  /// Steps the page when bar mode is off.
   void _step(int delta) {
     final pages = ref.read(scorePagesProvider(widget.scoreId)).value;
     if (pages == null || !_pageController.hasClients) return;
@@ -121,6 +235,7 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
 
   void _jumpTo(int index) {
     if (!_pageController.hasClients) return;
+    _transformController.value = Matrix4.identity();
     _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 220),
@@ -128,16 +243,27 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
     );
   }
 
-  /// Tapping the outer thirds of the page turns it.
+  /// Tapping the outer thirds of the page steps forward.
   ///
-  /// Bluetooth pedal support arrives in a later milestone as key events, and
-  /// not every musician will have one, so a tap target is always available.
-  void _onTapZone(TapZone zone) {
+  /// Bluetooth pedal support arrives in a later milestone as key events, and not
+  /// every musician will have one, so a tap target is always available.
+  ///
+  /// In bar mode a tap steps one bar; otherwise one page. Same gesture, so
+  /// nothing about reaching for the page changes when the mode does.
+  void _onTapZone(TapZone zone, List<ScorePage> pages) {
     switch (zone) {
       case TapZone.previous:
-        _step(-1);
+        if (_barMode ?? false) {
+          _stepBar(-1, pages);
+        } else {
+          _step(-1);
+        }
       case TapZone.next:
-        _step(1);
+        if (_barMode ?? false) {
+          _stepBar(1, pages);
+        } else {
+          _step(1);
+        }
       case TapZone.none:
         break;
     }
@@ -180,20 +306,33 @@ class _DrawingHint extends StatelessWidget {
   }
 }
 
+/// Where the page sits on screen, needed to turn a bar fraction into pixels.
 class _ViewerFooter extends ConsumerWidget {
   const _ViewerFooter({
     required this.currentPage,
     required this.pageCount,
     required this.drawingMode,
+    required this.barMode,
+    required this.cursor,
+    required this.layouts,
     required this.onStep,
+    required this.onStepBar,
     required this.onJump,
+    required this.onDetect,
   });
 
   final int currentPage;
   final int pageCount;
   final bool drawingMode;
+
+  /// Null while detection has not run yet.
+  final bool? barMode;
+  final BarCursor cursor;
+  final List<BarLayout> layouts;
   final ValueChanged<int> onStep;
+  final ValueChanged<int> onStepBar;
   final ValueChanged<int> onJump;
+  final VoidCallback onDetect;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -205,72 +344,20 @@ class _ViewerFooter extends ConsumerWidget {
               onChanged: (value) =>
                   ref.read(brushProvider.notifier).select(value),
             )
-          : _PageBar(
+          : BarNavigationBar(
               currentPage: currentPage,
               pageCount: pageCount,
-              onStep: onStep,
-              onJump: onJump,
+              barMode: barMode,
+              cursor: cursor,
+              layouts: layouts,
+              onStepPage: onStep,
+              onStepBar: onStepBar,
+              onJumpToPage: onJump,
+              onDetect: onDetect,
             ),
     );
   }
 }
 
-class _PageBar extends StatelessWidget {
-  const _PageBar({
-    required this.currentPage,
-    required this.pageCount,
-    required this.onStep,
-    required this.onJump,
-  });
 
-  final int currentPage;
-  final int pageCount;
-  final ValueChanged<int> onStep;
-  final ValueChanged<int> onJump;
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            tooltip: 'Previous page',
-            onPressed: currentPage > 0 ? () => onStep(-1) : null,
-            icon: const Icon(Icons.chevron_left_rounded),
-          ),
-          TextButton(
-            onPressed: () => _showPagePicker(context),
-            child: Text('${currentPage + 1} / $pageCount'),
-          ),
-          IconButton(
-            tooltip: 'Next page',
-            onPressed: currentPage < pageCount - 1 ? () => onStep(1) : null,
-            icon: const Icon(Icons.chevron_right_rounded),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showPagePicker(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (sheetContext) => SafeArea(
-        child: ListView.builder(
-          shrinkWrap: true,
-          itemCount: pageCount,
-          itemBuilder: (_, index) => ListTile(
-            title: Text('Page ${index + 1}'),
-            selected: index == currentPage,
-            onTap: () {
-              onJump(index);
-              Navigator.of(sheetContext).pop();
-            },
-          ),
-        ),
-      ),
-    );
-  }
-}

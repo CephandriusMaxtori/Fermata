@@ -14,14 +14,25 @@ class FakePageRenderer implements PageRenderer {
   FakePageRenderer({
     this.pageGeometry = const PageGeometry(widthPt: 612, heightPt: 792),
     this.renderDelay = Duration.zero,
+    this.bars = BarLayout.empty,
   });
 
   final PageGeometry pageGeometry;
   final Duration renderDelay;
 
+  /// Bars the fake reports for every page.
+  ///
+  /// Defaults to [BarLayout.empty] — the no-staff case — because that is what a
+  /// scan returns and the viewer must fall back to page turning. Tests that care
+  /// about bar stepping pass a real layout.
+  final BarLayout bars;
+
   final List<String> renderedPages = [];
   final List<String> evictedPages = [];
   int clearCount = 0;
+
+  @override
+  Future<BarLayout> barLayout(ScorePage page) async => bars;
 
   @override
   Future<PageGeometry?> geometry(ScorePage page) async => pageGeometry;
@@ -67,6 +78,10 @@ class HangingPageRenderer implements PageRenderer {
   @override
   Future<PageGeometry?> geometry(ScorePage page) =>
       Completer<PageGeometry?>().future;
+
+  @override
+  Future<BarLayout> barLayout(ScorePage page) =>
+      Completer<BarLayout>().future;
 
   @override
   Future<ui.Image?> render(

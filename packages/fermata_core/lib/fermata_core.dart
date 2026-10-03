@@ -7,10 +7,14 @@
 library;
 
 export 'src/geometry/normalized_point.dart';
+export 'src/geometry/normalized_rect.dart';
 export 'src/geometry/page_geometry.dart';
 export 'src/geometry/stroke.dart';
 export 'src/geometry/stroke_conditioner.dart';
 export 'src/import/duplicate_detection.dart';
+export 'src/measure/bar_cursor.dart';
+export 'src/measure/bar_detector.dart';
+export 'src/measure/bar_layout.dart';
 export 'src/midi/midi_pitch.dart';
 export 'src/midi/midi_score.dart';
 export 'src/midi/smf/byte_cursor.dart';
