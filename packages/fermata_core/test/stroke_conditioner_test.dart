@@ -1,4 +1,4 @@
-import 'dart:math' show atan2, min, pi;
+import 'dart:math' show atan2, max, min, pi;
 
 import 'package:fermata_core/fermata_core.dart';
 import 'package:test/test.dart';
@@ -75,6 +75,49 @@ void main() {
       final thinned = StrokeConditioner.thin(input, minDistance: 0.5);
 
       expect(thinned.length, 2);
+    });
+
+    test('a tail shorter than minDistance is absorbed, not kept', () {
+      // Issue #4. `kept.add(points.last)` was unconditional, so the final
+      // segment could be any length however short. A finger decelerates before
+      // lifting, so that is the *normal* end of a stroke, and it hands the
+      // spline a segment orders of magnitude shorter than the one before it.
+      final input = pointsFrom(const [
+        (0.1, 0.5),
+        (0.3, 0.5),
+        (0.5, 0.5),
+        (0.5001, 0.5),
+      ]);
+
+      final thinned = StrokeConditioner.thin(input, minDistance: 0.002);
+
+      // 4 points in, 3 out: the last is absorbed into the third, which moves to
+      // the true end position. Dropping it instead would lose 0.0001 of stroke.
+      expect(thinned.length, 3);
+      expect(thinned.last.position.x, closeTo(0.5001, 1e-9));
+      for (var i = 1; i < thinned.length; i++) {
+        expect(
+          thinned[i].position.distanceTo(thinned[i - 1].position),
+          greaterThanOrEqualTo(0.002),
+          reason: 'thin promised a minimum spacing and broke it at the end',
+        );
+      }
+    });
+
+    test('still keeps a last point that is genuinely far away', () {
+      // The case the absorption above must not break: a real final segment
+      // stays a separate vertex rather than being merged backwards.
+      final input = pointsFrom(const [
+        (0.1, 0.5),
+        (0.3, 0.5),
+        (0.5, 0.5),
+        (0.7, 0.5),
+      ]);
+
+      final thinned = StrokeConditioner.thin(input, minDistance: 0.002);
+
+      expect(thinned.length, 4);
+      expect(thinned.last.position.x, closeTo(0.7, 1e-9));
     });
   });
 
@@ -223,6 +266,15 @@ void main() {
       // A shallow arc. The V shapes used here previously turned ~90 degrees per
       // vertex, which is a corner by any reading and is now left sharp on
       // purpose, so the "stays dense" claim is made with an actual curve.
+      //
+      // The claim is about *fidelity*, not point count. This used to assert
+      // `result.length > input.length`, which was true for the wrong reason:
+      // the spline bulged away from the chord polyline, so simplify had to keep
+      // extra points to stay inside tolerance. Once the bulge is fixed (issue #4)
+      // the density correctly goes away, because five evenly-spaced points
+      // already describe this arc to 0.067 - far inside any useful tolerance.
+      // Asserting density would have pinned the bug, so what is asserted now is
+      // that the stored polyline still follows the curve and keeps its extent.
       final input = pointsFrom(const [
         (0, 0.5),
         (0.25, 0.376),
@@ -238,9 +290,18 @@ void main() {
         samplesPerSegment: 8,
       );
 
-      expect(result.length, greaterThan(input.length));
+      expect(result.length, greaterThanOrEqualTo(3));
       expect(result.first.position.x, closeTo(0, 1e-9));
       expect(result.last.position.x, closeTo(1, 1e-9));
+      // The middle of the arc is genuinely bowed away from the straight line
+      // between the endpoints, and that bow survives.
+      expect(
+        result.any(
+          (p) => p.position.y < 0.4,
+        ),
+        isTrue,
+        reason: 'the arc came out flat, so the curve was lost',
+      );
     });
 
     test('keeps a right-angle corner instead of looping past it', () {
@@ -299,14 +360,22 @@ void main() {
         simplifyTolerance: 0.0015,
       );
 
-      // Still densified from the five input points...
-      expect(result.length, greaterThan(input.length));
-      // ...and still hugging the arc, not inscribed in it as a polyline would be.
+      // Faithful to the finger's path in both directions: every input vertex is
+      // reproduced, and every stored point lies back on the curve. This is what
+      // the old `result.length > input.length` was a proxy for, and it fails if
+      // a curve is ever faceted into straight chords.
       for (final point in input) {
         expect(
           _distanceToPolyline(point.position, result),
           lessThan(0.01),
           reason: 'a smooth curve was faceted into straight chords',
+        );
+      }
+      for (final point in result) {
+        expect(
+          _distanceToPolyline(point.position, input),
+          lessThan(0.01),
+          reason: 'smoothing pushed ink off the curve it was drawn along',
         );
       }
     });
@@ -346,6 +415,71 @@ void main() {
           reason: 'the leg after the corner bulged away from straight',
         );
       }
+    });
+
+    test('a fast leg into a slow finish does not hook past the end', () {
+      // Issue #4, "Pen tool acting like a lasso": the #1 fix was real but
+      // incomplete. Uniform Catmull-Rom takes its tangent at a control point
+      // from the chord across that point's neighbours, so a long leg followed by
+      // a short one sends the curve off along the long leg's direction and
+      // forces it back. Every fixture from #1 is evenly spaced, so this was
+      // never in the tested input distribution.
+      //
+      // Fingers decelerate before lifting, so a stroke that draws fast and
+      // settles is ordinary rather than exotic. The spacing ratio here is the
+      // invariant that matters; the individual points are incidental.
+      final input = pointsFrom(const [
+        (0.2, 0.2),
+        (0.45, 0.25),
+        (0.62, 0.35),
+        (0.70, 0.46),
+        (0.715, 0.52),
+      ]);
+
+      final result = StrokeConditioner.finalize(
+        input,
+        minDistance: 0.002,
+        simplifyTolerance: 0.0015,
+      );
+
+      // Half a logical pixel on a 510px page. Before this fix the same input
+      // strayed 0.0086, which is ~4.4 logical px and the visible hook.
+      for (final point in result) {
+        expect(
+          _distanceToPolyline(point.position, input),
+          lessThan(0.001),
+          reason: 'the spline hooked away from the finger path near the end',
+        );
+      }
+    });
+
+    test('no segment dwarfs the one after it', () {
+      // The general form of the above, and the property that actually fixes it:
+      // once every run entering the spline is evenly spaced, the overshoot has
+      // nothing to amplify. A hand-picked fixture would only prove one case.
+      final input = pointsFrom(const [
+        (0.2, 0.2), (0.35, 0.2), (0.5, 0.2),
+        (0.5, 0.30), (0.5, 0.32), (0.5001, 0.3205),
+      ]);
+
+      final result = StrokeConditioner.finalize(
+        input,
+        minDistance: 0.002,
+        simplifyTolerance: 0.0015,
+      );
+
+      final lengths = [
+        for (var i = 1; i < result.length; i++)
+          result[i].position.distanceTo(result[i - 1].position),
+      ];
+      expect(lengths, isNotEmpty);
+      final ratio = lengths.reduce(max) / lengths.reduce(min);
+      expect(
+        ratio,
+        lessThan(20),
+        reason: 'a segment ${lengths.reduce(max)} long sits beside one '
+            '${lengths.reduce(min)} long, which is what makes Catmull-Rom hook',
+      );
     });
 
     test('never strays far from the path the finger took', () {
