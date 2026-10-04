@@ -209,6 +209,18 @@ digitally-engraved PDFs and **fails outright on a scan, a vector-only export, or
 with no text layer** — the last being the common case for printed music. This is a progressive
 enhancement, never a foundation.
 
+- [ ] **Bar detection has never been verified against a real engraved score.** Checked 2026-10-03 by
+  inspecting the raw bytes of every score PDF on this machine — `Mercy mercy mercy full score 1.pdf`
+  (5.2 MB), `phinneasrabies25.pdf` (176 KB), `sheet.pdf` (3 KB). **All three have no text layer:**
+  zero case-insensitive matches for `font`, `/FontDescriptor`/`/BaseFont`/`/Widths` all absent, and
+  `/DCTDecode` present, i.e. the music is an embedded JPEG of a printed page. So every score the
+  project has actually been tried against is a scan, and detection has never once returned a bar.
+  The thresholds in `BarDetector` (`_kBarGapFactor`, `_kMinRunsPerWidth`, `_kMinSystemHeight`) are
+  therefore **unvalidated**, and issue #2 was closed as working on the strength of the code reading
+  correctly, not on a score where it did. Get a digitally-engraved PDF and confirm before trusting it.
+  How to tell: a text-layer PDF contains `/Font` and `/BaseFont`; a scan contains `/Image` and
+  `/DCTDecode` and no font keys at all.
+
   - The exact answer is in the page's vector drawing operators. **pdfrx does not currently expose
     them.** When it does, it should replace `fermata_core/lib/src/measure/` outright rather than be
     merged in: "glyph gaps" and "actual strokes" are different sources of truth, and averaging them is
@@ -231,6 +243,27 @@ Design notes worth keeping:
     a bar per press, which is exactly how hands-free page turning comes to feel broken.
   - The bar number is **omitted** when a preceding page has no staff. "Bar 4 of 12" that silently
     skipped a page's worth of bars is a lie; the footer falls back to page numbers instead.
+
+- [x] **`BarNavigator.forward` was the one function in `bar_cursor.dart` that indexed without bounds-checking**
+  (`back`, `positionIn` and the page skipping all guarded). `isLast` calls it and the footer calls that
+  from `build`, so a cursor pointing at a page with no staff threw a `RangeError` *mid-frame* rather
+  than failing a tap — issue #5. Reachable two ways, both deterministic: detection finding nothing
+  (the scan case) and then the un-gated "By bar" button, or a score whose page 0 is a title page while
+  `isNavigable` is true because a later page has staff.
+- [x] **Bar mode was one flag doing two jobs.** `BarNavigationBar.barMode` is documented tri-state
+  (`null` not run / `false` ran-but-found-nothing / `true` found), and switching bar mode *off* wrote
+  `false` into it, so one round trip through the toggle erased the fact that bars had been found and
+  made the mode impossible to switch back on. Split into `_detection` (what detection found) and
+  `_barMode` (is it on), with the toggle disabled when nothing was detected and `_toggleBarMode`
+  refusing the switch as a second line of defence.
+- [x] **`BarCursor.start` is a constant, not a lookup** — it means page 0 system 0 whatever page 0 is.
+  Added `BarNavigator.firstNavigable`, and the viewer now starts there. `BarCursor.start` remains as
+  the fallback so callers never handle a nullable cursor.
+- [x] `_scrollToCursor` read the layout via `_currentPage` but indexed it with the *cursor's* system and
+  bar, then called the assertive `barRange()`. The two desync on every bar-mode switch, since enabling
+  resets the cursor to page 0 while `PageView` stays where the user was.
+- [x] Detection failures are caught (`_runDetection`) and land on "nothing found". The footer reads
+  `null` as "still looking", so an escaping exception stranded it on "Looking for bars..." for good.
 
 ### M2 — Basic PDF viewer
 
