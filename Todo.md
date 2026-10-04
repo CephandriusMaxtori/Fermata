@@ -265,7 +265,16 @@ Design notes worth keeping:
 - [x] Detection failures are caught (`_runDetection`) and land on "nothing found". The footer reads
   `null` as "still looking", so an escaping exception stranded it on "Looking for bars..." for good.
 
-### M2 — Basic PDF viewer
+#- [ ] **bar-scribe: extract barlines from scanned scores.** Design in [`bar-scribe-design.md`](bar-scribe-design.md).
+  Every score on this machine is a scan, so bar-by-bar has never worked and the `BarDetector`
+  thresholds are unvalidated. bar-scribe is a static browser tool (pdf.js, nothing uploaded) that
+  rasterises, deskews, binarises, finds staff lines and then finds barline columns, emitting
+  `StaffSystem`-shaped JSON with a per-system confidence score. **MIDI transcription was considered
+  and rejected**: it has no spatial model, so there is nothing to derive page fractions from, and no
+  bar structure either. bar-scribe duplicates `StaffSystem` in JS as a result, which is a real cost —
+  if it proves useful, move the geometry into `fermata_core` and share it.
+
+## M2 — Basic PDF viewer
 
 - [x] `pdfrx` via `pdfrx_engine`'s render only (never its `material_ui` viewer widgets)
 - [x] `PageRenderer` interface; `PdfrxPageRenderer` is the only production impl
