@@ -67,11 +67,25 @@ abstract final class BarNavigator {
   ///
   /// Returns [cursor] unchanged at the end rather than wrapping, so a held pedal
   /// at the last bar does not silently restart the piece.
+  ///
+  /// The guards are load-bearing and are here for a specific reason: the viewer
+  /// holds a cursor that is not re-validated every frame, and a score's first
+  /// page is frequently a title page with no staff on it. `BarCursor.start`
+  /// points at page 0 system 0 unconditionally, so a cursor parked there on such
+  /// a score makes the two indexing lines below throw a `RangeError` — out of
+  /// `build`, since `isLast` calls this. `back`, `positionIn` and the page
+  /// skipping all guard for the same reason; this used to be the one that
+  /// didn't, which is issue #5.
   static BarCursor forward(
     BarCursor cursor,
     List<BarLayout> layouts,
   ) {
+    if (cursor.pageIndex < 0 || cursor.pageIndex >= layouts.length) {
+      return cursor;
+    }
+
     final page = layouts[cursor.pageIndex];
+    if (cursor.systemIndex >= page.systems.length) return cursor;
     final system = page.systems[cursor.systemIndex];
 
     if (cursor.barIndex + 1 < system.barCount) {
@@ -185,4 +199,25 @@ abstract final class BarNavigator {
   /// a control that does nothing, which is worse than not offering it.
   static bool isNavigable(List<BarLayout> layouts) =>
       layouts.any((layout) => layout.hasStaff && layout.barCount > 0);
+
+  /// The first bar of the first page that actually has staff.
+  ///
+  /// Falls back to [BarCursor.start] when nothing is navigable, so callers
+  /// always get a usable cursor and never have to null-check one.
+  ///
+  /// This exists because [BarCursor.start] is a *constant*, not a lookup: it
+  /// means page 0 system 0 whatever page 0 happens to be. On a score whose first
+  /// page is a title page — extremely common — that is a position with no bar in
+  /// it, and parking the cursor there is what made issue #5 reproducible on the
+  /// very next frame. `isNavigable` only needs *one* page to have staff, so it
+  /// happily reported a navigable score while the cursor sat on the one page
+  /// that had none.
+  static BarCursor firstNavigable(List<BarLayout> layouts) {
+    for (var i = 0; i < layouts.length; i++) {
+      if (layouts[i].systems.isNotEmpty) {
+        return BarCursor(pageIndex: i, systemIndex: 0, barIndex: 0);
+      }
+    }
+    return BarCursor.start;
+  }
 }

@@ -85,6 +85,128 @@ void main() {
     });
   });
 
+  group('BarNavigator: out-of-range cursors', () {
+    // Issue #5. The viewer holds a cursor that nothing re-validates each frame,
+    // and `forward` was the only function in the file that indexed without
+    // checking. `isLast` calls it, and the footer calls that from `build`, so a
+    // cursor pointing at a page with no staff threw a RangeError mid-frame
+    // rather than failing a tap. `back` and `positionIn` already guarded; these
+    // pin the matching guards on `forward` and on `back`'s own.
+    const nowhere = BarCursor(pageIndex: 0, systemIndex: 0, barIndex: 0);
+
+    test('forward on an empty score returns the cursor', () {
+      expect(BarNavigator.forward(nowhere, const []), nowhere);
+    });
+
+    test('forward on a page with no systems returns the cursor', () {
+      expect(
+        BarNavigator.forward(nowhere, const [BarLayout.empty]),
+        nowhere,
+      );
+    });
+
+    test('forward past the last page returns the cursor', () {
+      expect(
+        BarNavigator.forward(
+          const BarCursor(pageIndex: 3, systemIndex: 0, barIndex: 0),
+          [page([2])],
+        ),
+        const BarCursor(pageIndex: 3, systemIndex: 0, barIndex: 0),
+      );
+    });
+
+    test('forward past the last system returns the cursor', () {
+      expect(
+        BarNavigator.forward(
+          const BarCursor(pageIndex: 0, systemIndex: 2, barIndex: 0),
+          [page([2])],
+        ),
+        const BarCursor(pageIndex: 0, systemIndex: 2, barIndex: 0),
+      );
+    });
+
+    test('back mirrors every one of those guards', () {
+      // These were already correct, and were untested. They are only safe today
+      // because someone read them next to `forward` and matched them, which is
+      // not a property a test suite records.
+      expect(BarNavigator.back(nowhere, const []), nowhere);
+      expect(BarNavigator.back(nowhere, const [BarLayout.empty]), nowhere);
+      expect(
+        BarNavigator.back(
+          const BarCursor(pageIndex: 3, systemIndex: 0, barIndex: 0),
+          [page([2])],
+        ),
+        const BarCursor(pageIndex: 3, systemIndex: 0, barIndex: 0),
+      );
+      expect(
+        BarNavigator.back(
+          const BarCursor(pageIndex: 0, systemIndex: 2, barIndex: 0),
+          [page([2])],
+        ),
+        const BarCursor(pageIndex: 0, systemIndex: 2, barIndex: 0),
+      );
+    });
+
+    test('positionIn reports nothing rather than throwing', () {
+      expect(BarNavigator.positionIn(nowhere, const []), isNull);
+      expect(BarNavigator.positionIn(nowhere, const [BarLayout.empty]), isNull);
+    });
+  });
+
+  group('BarNavigator.firstNavigable', () {
+    test('finds the first page that actually has staff', () {
+      // The shape issue #5 took: page 0 is a title page, so `BarCursor.start`
+      // points at a bar that is not there, while `isNavigable` is happy because
+      // a later page has staff.
+      final layouts = [BarLayout.empty, BarLayout.empty, page([4])];
+
+      expect(BarNavigator.isNavigable(layouts), isTrue);
+      expect(
+        BarNavigator.firstNavigable(layouts),
+        const BarCursor(pageIndex: 2, systemIndex: 0, barIndex: 0),
+      );
+    });
+
+    test('is the start cursor when the first page has staff', () {
+      expect(
+        BarNavigator.firstNavigable([page([3]), page([3])]),
+        BarCursor.start,
+      );
+    });
+
+    test('falls back to the start cursor when nothing has staff', () {
+      // A fallback rather than null so callers never have to handle a nullable
+      // cursor. `isNavigable` is what gates the viewer, so this value is only
+      // ever reached on a score that is not navigable anyway.
+      expect(
+        BarNavigator.firstNavigable(const [BarLayout.empty]),
+        BarCursor.start,
+      );
+      expect(BarNavigator.firstNavigable(const []), BarCursor.start);
+    });
+
+    test('walks the whole score from wherever it starts', () {
+      // Proves the returned cursor is a real entry point: stepping forward from
+      // it visits bars and does not immediately stall.
+      final layouts = [BarLayout.empty, page([2, 2])];
+      final start = BarNavigator.firstNavigable(layouts);
+
+      final visited = <BarCursor>[];
+      var cursor = start;
+      visited.add(cursor);
+      var guard = 0;
+      while (guard++ < 20) {
+        final next = BarNavigator.forward(cursor, layouts);
+        if (next == cursor) break;
+        cursor = next;
+        visited.add(cursor);
+      }
+
+      expect(visited, hasLength(4));
+      expect(visited.toSet(), hasLength(4));
+    });
+  });
+
   group('BarNavigator.back', () {
     test('steps back within a system', () {
       final layouts = [page([4])];

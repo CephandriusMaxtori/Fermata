@@ -19,12 +19,19 @@ BarLayout pageWith(List<int> systems) =>
 /// taps anything, so a captured int would freeze at zero and every assertion
 /// after an interaction would fail for reasons that have nothing to do with the
 /// bar.
+///
+/// [barStepping] defaults to whatever `barMode == true` implies, which is what
+/// every test written before the two were split wanted: "bars were found" and
+/// "stepping by bar" together. Pass it explicitly to exercise the case they now
+/// have to answer for separately, namely bar mode turned back off after
+/// detection succeeded.
 Future<({List<int> pageSteps, List<int> barSteps, List<int> jumps, List<int> detects, List<int> toggles})>
 pumpBar(
   WidgetTester tester, {
   required bool? barMode,
   required BarCursor cursor,
   required List<BarLayout> layouts,
+  bool? barStepping,
   int currentPage = 0,
   int pageCount = 1,
 }) async {
@@ -41,6 +48,7 @@ pumpBar(
           currentPage: currentPage,
           pageCount: pageCount,
           barMode: barMode,
+          barStepping: barStepping ?? barMode == true,
           cursor: cursor,
           layouts: layouts,
           onStepPage: pageSteps.add,
@@ -303,6 +311,113 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(calls.jumps, [1]);
+    });
+  });
+
+  group('BarNavigationBar: issue #5', () {
+    // Switching to bar mode and back threw. The crash was reached through the
+    // scan case: detection finds nothing, the footer still offered an enabled
+    // "By bar", tapping it set bar mode on for a score with zero bars, and the
+    // next frame indexed an empty systems list. These pin the reachable
+    // configurations, none of which had a test before.
+
+    testWidgets('survives bar mode on a score with no bars at all',
+        (tester) async {
+      // The exact state the toggle used to be able to produce.
+      await pumpBar(
+        tester,
+        barMode: true,
+        barStepping: true,
+        cursor: BarCursor.start,
+        layouts: const [BarLayout.empty, BarLayout.empty],
+        pageCount: 2,
+      );
+
+      // Nothing to step, so the number is not printed and the chevrons are
+      // disabled rather than throwing on the way to finding that out.
+      expect(find.textContaining('Bar '), findsNothing);
+      expect(find.text('1 / 2'), findsOneWidget);
+
+      final next = tester.widget<IconButton>(
+        find.ancestor(
+          of: find.byIcon(Icons.chevron_right_rounded),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(next.onPressed, isNull);
+    });
+
+    testWidgets('survives a cursor on a staffless first page', (tester) async {
+      // A title page is page 0, so `BarCursor.start` points at no bar while
+      // `isNavigable` is true because a later page has staff. This is the
+      // configuration the navigator's new guards protect.
+      await pumpBar(
+        tester,
+        barMode: true,
+        barStepping: true,
+        cursor: BarCursor.start,
+        layouts: [BarLayout.empty, pageWith([4])],
+        pageCount: 2,
+      );
+
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('does not offer bar stepping when nothing was detected',
+        (tester) async {
+      final calls = await pumpBar(
+        tester,
+        barMode: false,
+        cursor: BarCursor.start,
+        layouts: const [BarLayout.empty, BarLayout.empty],
+        pageCount: 2,
+      );
+
+      // The button is still shown, so the footer admits it looked, but it is
+      // disabled: a control that leads nowhere is worse than a dead one.
+      expect(find.text('By bar'), findsOneWidget);
+      final toggle = tester.widget<TextButton>(
+        find.ancestor(
+          of: find.text('By bar'),
+          matching: find.byType(TextButton),
+        ),
+      );
+      expect(toggle.onPressed, isNull);
+
+      await tester.tap(find.text('By bar'));
+      expect(calls.toggles, isEmpty);
+    });
+
+    testWidgets('switching bar mode off does not look like a failed scan',
+        (tester) async {
+      // The round trip that erased what detection had learned. Bars were found,
+      // the user turned bar mode off, and the footer used to read that as
+      // "detection found no staff", so the mode could never be switched back on.
+      final calls = await pumpBar(
+        tester,
+        barMode: true,
+        barStepping: false,
+        cursor: const BarCursor(pageIndex: 0, systemIndex: 0, barIndex: 2),
+        layouts: [pageWith([4])],
+      );
+
+      // Page-based again...
+      expect(find.textContaining('Bar '), findsNothing);
+      expect(find.text('1 / 1'), findsOneWidget);
+      // ...but bars are still known to exist, so the way back on is offered and
+      // enabled. This is the whole reason barStepping is a separate flag.
+      expect(find.text('By bar'), findsOneWidget);
+      final toggle = tester.widget<TextButton>(
+        find.ancestor(
+          of: find.text('By bar'),
+          matching: find.byType(TextButton),
+        ),
+      );
+      expect(toggle.onPressed, isNotNull);
+
+      await tester.tap(find.text('By bar'));
+      expect(calls.toggles, [1]);
     });
   });
 }

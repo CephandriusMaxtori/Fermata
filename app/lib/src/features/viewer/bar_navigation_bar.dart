@@ -14,13 +14,21 @@ import 'package:flutter/material.dart';
 ///  * `null`  — detection has not run or is still running. Shows the "Find bars"
 ///    affordance and does not pretend to know a bar count.
 ///  * `false` — detection ran and found no staff. Page stepping, page numbers.
-///  * `true`  — bars were found. Bar stepping, bar numbers.
-class BarNavigationBar extends StatelessWidget {
+///  * `true`  — bars were found. Bar stepping is *available*.
+///
+  /// Note that last line: available, not active. Whether bar stepping is
+  /// currently on is [barStepping], a separate flag, because conflating the two
+  /// was issue #5. With one field, turning bar mode off set `barMode` to
+  /// `false`, which the footer then read as "detection found no staff", so one
+  /// round trip through the toggle erased the fact that the score had bars at
+  /// all and could leave the cursor on a page with no bar in it.
+  class BarNavigationBar extends StatelessWidget {
   const BarNavigationBar({
     super.key,
     required this.currentPage,
     required this.pageCount,
     required this.barMode,
+    required this.barStepping,
     required this.cursor,
     required this.layouts,
     required this.onStepPage,
@@ -36,6 +44,14 @@ class BarNavigationBar extends StatelessWidget {
 
   /// See the class doc for the three cases.
   final bool? barMode;
+
+  /// Whether the chevrons step by bar right now.
+  ///
+  /// Kept apart from [barMode] so that switching bar mode *off* is not
+  /// indistinguishable from detection having found nothing. Only ever true when
+  /// [barMode] is true, which the caller guarantees and this widget enforces by
+  /// disabling the toggle otherwise.
+  final bool barStepping;
 
   final BarCursor cursor;
   final List<BarLayout> layouts;
@@ -56,7 +72,11 @@ class BarNavigationBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final bars = barMode ?? false;
+    final bars = barStepping;
+    // Whether bar mode can be switched on at all. Offering a toggle that leads
+    // nowhere is the thing the scan case has to avoid, and a disabled button
+    // still says "we looked" where hiding it would not.
+    final canStepBars = barMode ?? false;
     final position = BarNavigator.positionIn(cursor, layouts);
 
     return Padding(
@@ -114,7 +134,7 @@ class BarNavigationBar extends StatelessWidget {
                 )
               else
                 TextButton.icon(
-                  onPressed: onToggleMode,
+                  onPressed: canStepBars ? onToggleMode : null,
                   icon: Icon(
                     bars
                         ? Icons.horizontal_rule_rounded

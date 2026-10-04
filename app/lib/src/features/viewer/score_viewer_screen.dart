@@ -41,11 +41,23 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
   int _currentPage = 0;
   bool _drawingMode = false;
 
-  /// Whether the footer steps by bar instead of by page.
+  /// Whether detection has run, and what it found.
   ///
   /// Null until the first detection finishes, which is also how the footer knows
   /// to show a spinner rather than claiming a bar count it does not have.
-  bool? _barMode;
+  ///
+  /// This is deliberately *not* the same field as whether bar mode is on. They
+  /// were one flag, which meant switching bar mode off wrote `false` here and the
+  /// footer read that as "detection found no staff": one round trip through the
+  /// toggle threw away what detection had learned. That was issue #5.
+  bool? _detection;
+
+  /// Whether the footer steps by bar instead of by page.
+  ///
+  /// Only ever true when detection found bars, so the viewer cannot offer bar
+  /// stepping on a score where there is nothing to step to.
+  bool _barMode = false;
+
   BarCursor _cursor = BarCursor.start;
 
   /// Bar layouts per page index, filled in as detection completes.
@@ -91,10 +103,35 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
       ..clear()
       ..addAll(layouts);
 
+    // `firstNavigable`, not `BarCursor.start`: the first page of a score is
+    // often a title page with no staff on it, and parking the cursor on a bar
+    // that does not exist is what made the very next frame throw. See #5.
+    final navigable = BarNavigator.isNavigable(_orderedLayouts(pages));
+    final cursor = BarNavigator.firstNavigable(_orderedLayouts(pages));
+
     setState(() {
-      _barMode = BarNavigator.isNavigable(_orderedLayouts(pages));
-      _cursor = BarCursor.start;
+      _detection = navigable;
+      _barMode = navigable;
+      _cursor = cursor;
     });
+  }
+
+  /// Runs detection, treating any failure as "nothing found".
+  ///
+  /// The footer reads `null` as "still looking", so an escaping exception would
+  /// strand it on "Looking for bars..." for good. Landing on `false` instead
+  /// means the viewer falls back to page turning, which is what it would have
+  /// done anyway had the scan simply yielded no text.
+  Future<void> _runDetection(List<ScorePage> pages) async {
+    try {
+      await _detectBars(pages);
+    } on Object {
+      if (!mounted) return;
+      setState(() {
+        _detection = false;
+        _barMode = false;
+      });
+    }
   }
 
   /// [_barLayouts] in page order, for [BarNavigator].
@@ -106,10 +143,6 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
     for (var i = 0; i < pages.length; i++)
       _barLayouts[i] ?? BarLayout.empty,
   ];
-
-  /// The current page's bars.
-  BarLayout _currentLayout(List<ScorePage> pages) =>
-      _barLayouts[_currentPage] ?? BarLayout.empty;
 
   /// Scrolls so [cursor]'s bar is the music in view.
   ///
@@ -123,10 +156,18 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
   /// The transform is rebuilt from identity rather than composed onto the
   /// current one: bar positions are page fractions, so a leftover pinch would
   /// scale the offset into the wrong place, and a leftover drag would compound.
-  void _scrollToCursor(List<ScorePage> pages) {
-    final layout = _currentLayout(pages);
+  void _scrollToCursor() {
+    // The layout comes from the *cursor's* page, not the page currently on
+    // screen. They are not always the same: switching bar mode on resets the
+    // cursor to the first bar of the score while `PageView` stays wherever the
+    // user was, so reading the current page's layout here indexed it with
+    // another page's system and bar and tripped `barRange`'s assert. That was
+    // the second half of #5, and the half that needed an actual mode switch to
+    // reach.
+    final layout = _barLayouts[_cursor.pageIndex] ?? BarLayout.empty;
     if (_cursor.systemIndex >= layout.systems.length) return;
     final system = layout.systems[_cursor.systemIndex];
+    if (_cursor.barIndex >= system.barCount) return;
     final range = system.barRange(_cursor.barIndex);
 
     final size = context.size;
@@ -147,11 +188,22 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
   /// layouts may have just been discovered, and carrying a cursor from a previous
   /// session's guess would put the first bar step somewhere arbitrary. Turning
   /// it off keeps the cursor, so switching back resumes where the user was.
-  void _toggleBarMode() {
-    final enabling = !(_barMode ?? false);
+  void _toggleBarMode(List<ScorePage> pages) {
+    final enabling = !_barMode;
+    if (enabling && !BarNavigator.isNavigable(_orderedLayouts(pages))) return;
+
+    // `firstNavigable`, not `BarCursor.start`. Detection finding nothing used to
+    // leave the footer still offering "By bar", and enabling bar mode there
+    // parked a cursor on a score with no bars in it at all, which threw on the
+    // next frame. Refusing the switch keeps that state unreachable rather than
+    // merely unlikely.
+    final cursor = enabling
+        ? BarNavigator.firstNavigable(_orderedLayouts(pages))
+        : _cursor;
+
     setState(() {
-      _barMode = enabling ? true : false;
-      if (enabling) _cursor = BarCursor.start;
+      _barMode = enabling;
+      _cursor = cursor;
     });
     if (enabling) _transformController.value = Matrix4.identity();
   }
@@ -175,7 +227,7 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
       );
       return;
     }
-    _scrollToCursor(pages);
+    _scrollToCursor();
   }
 
   @override
@@ -231,14 +283,15 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
                 currentPage: _currentPage,
                 pageCount: pages.length,
                 drawingMode: _drawingMode,
-                barMode: _barMode,
+                barMode: _detection,
+                barStepping: _barMode,
                 cursor: _cursor,
                 layouts: _orderedLayouts(pages),
                 onStep: _step,
                 onStepBar: (delta) => _stepBar(delta, pages),
                 onJump: _jumpTo,
-                onDetect: () => _detectBars(pages),
-                onToggleMode: _toggleBarMode,
+                onDetect: () => _runDetection(pages),
+                onToggleMode: () => _toggleBarMode(pages),
               ),
         orElse: () => null,
       ),
@@ -277,13 +330,13 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
   void _onTapZone(TapZone zone, List<ScorePage> pages) {
     switch (zone) {
       case TapZone.previous:
-        if (_barMode ?? false) {
+        if (_barMode) {
           _stepBar(-1, pages);
         } else {
           _step(-1);
         }
       case TapZone.next:
-        if (_barMode ?? false) {
+        if (_barMode) {
           _stepBar(1, pages);
         } else {
           _step(1);
@@ -337,6 +390,7 @@ class _ViewerFooter extends ConsumerWidget {
     required this.pageCount,
     required this.drawingMode,
     required this.barMode,
+    required this.barStepping,
     required this.cursor,
     required this.layouts,
     required this.onStep,
@@ -352,6 +406,10 @@ class _ViewerFooter extends ConsumerWidget {
 
   /// Null while detection has not run yet.
   final bool? barMode;
+
+  /// Whether the footer is stepping by bar right now. Distinct from [barMode],
+  /// which reports whether bars were *found*.
+  final bool barStepping;
   final BarCursor cursor;
   final List<BarLayout> layouts;
   final ValueChanged<int> onStep;
@@ -374,6 +432,7 @@ class _ViewerFooter extends ConsumerWidget {
               currentPage: currentPage,
               pageCount: pageCount,
               barMode: barMode,
+              barStepping: barStepping,
               cursor: cursor,
               layouts: layouts,
               onStepPage: onStep,
