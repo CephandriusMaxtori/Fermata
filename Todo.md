@@ -159,6 +159,34 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
   relative to the shorter box, which is the axis a system is defined along.
   - A degenerate glyph box was `continue`d in place instead of ending the run, so every later character
   was paired against the wrong rect (`abc` came out as `ac`). It now flushes the run.
+- [x] **Uniform Catmull-Rom hooked on unevenly-spaced input** (issue #4, "Pen tool acting like a
+  lasso"). Issue #1's fix reordered `finalize` to thin → smooth → simplify and that was necessary,
+  but not sufficient. Uniform CR takes its tangent at a control point from the chord *across* that
+  point's neighbours, `(p[i+1] - p[i-1]) / 2`, which scales with the long segment regardless of how
+  short the segment being drawn is. `thin` guarantees a *minimum* spacing and nothing more, so a
+  stroke drawn fast and then settled reaches the spline with one segment orders of magnitude shorter
+  than the one before it. Measured: a stroke that strayed **0.0086** from the finger's path (≈4.4
+  logical px on a 510px page) now strays **0.0001**. Why #1 missed it: all four of its fixtures are
+  evenly spaced (ratio ≤ 1.33), which real finger input never is. Fixed by `_respace`, which re-spaces
+  each corner run while still emitting its original vertices — re-spacing, not decimation, so a
+  corner (a run *boundary*) can never be cut. Costs a little curvature (flatness 0.00076 → 0.00104 on
+  a measured arc) and buys 7× less stray (0.000122 → 0.000018); both stay inside the 0.0015
+  tolerance.
+- [x] **`thin` kept its last point unconditionally**, so the final segment could be any length however
+  short. A finger decelerates before lifting, making that the *normal* end of a stroke rather than an
+  edge case, and it is what hands the spline the pathological spacing above. Now absorbed into the
+  previous kept point when closer than `minDistance`, which moves that point to the true end position
+  rather than dropping it.
+- [ ] **Corner detection is anisotropic** and the docs claimed more headroom than exists. x is a
+  fraction of page width and y of page height, so on A4 the same physical 45° corner measures
+  **0.615 rad travelling horizontally and 0.956 rad travelling vertically** — it is preserved or
+  smoothed depending on which way the pen happened to be going. Separately, the doc at
+  `stroke_conditioner.dart:50-54` claimed real handwriting turns 0.008–0.2 rad, an order of magnitude
+  below the 0.7 threshold; measured through `thin` with a pixel of capacitive jitter it is
+  **0.16–0.46 rad**, and past ~0.006 of jitter the worst vertices cross 0.7 and `_cornerRuns` starts
+  firing on noise — returning only two-point runs, so the stroke silently falls back to a raw
+  polyline with no spline at all. Not fixed here: correcting it means measuring the angle in a space
+  where the page is square, which is a separate change. Comment corrected, default left alone.
 - [ ] Minor: unused `dart:async` import (`library_screen.dart:1`); dead `await makeScores(database)`
   (`storage_test.dart:269`); unused `FakePdfPageCounter` (`storage_test.dart:38`);
   `MidiFiles.linkedScoreId` FK is one-way, so deleting a MIDI leaves a dangling

@@ -30,7 +30,23 @@ abstract final class StrokeConditioner {
         kept.add(candidate);
       }
     }
-    kept.add(points.last);
+
+    // The last point is always kept so the stroke's extent is preserved, but not
+    // unconditionally: `kept.add` here used to leave a final segment of any
+    // length, however short. A finger decelerates before lifting, so that tail
+    // segment is routinely orders of magnitude shorter than the leg before it,
+    // and the spline then draws a hook on it (see `_respace`).
+    //
+    // Absorbing it into the previous kept point keeps the stroke's true end
+    // position -- which is why the last point is not simply dropped -- while
+    // restoring the spacing guarantee `minDistance` promises everywhere.
+    if (kept.length > 1 &&
+        kept.last.position.distanceTo(points.last.position) < minDistance) {
+      kept[kept.length - 1] = points.last;
+    } else {
+      kept.add(points.last);
+    }
+
     return List<StrokePoint>.unmodifiable(kept);
   }
 
@@ -52,10 +68,34 @@ abstract final class StrokeConditioner {
   /// own and the corner vertex is emitted exactly once, unblurred. The threshold
   /// trades the two off - set it high and handwriting keeps hard angles inside
   /// what should have been curves, set it low and true curves get faceted.
+  ///
+  /// ## On the threshold's real headroom
+  ///
+  /// An earlier version of this comment claimed handwriting turns 0.008-0.2 rad,
+  /// "an order of magnitude" below the 0.7 default. That was measured on clean
+  /// synthetic arcs, not on finger input, and it is roughly an order of
+  /// magnitude optimistic. Sampling at `minDistance` (0.002 is about two device
+  /// pixels) with a pixel of capacitive jitter gives per-vertex turns of
+  /// 0.16-0.46 rad, and past about 0.006 of jitter the worst vertices cross 0.7
+  /// and the corner splitter starts firing on noise.
+  ///
+  /// When it does, `_cornerRuns` returns only two-point runs, so the stroke is
+  /// emitted as a raw polyline with no spline at all. That is a silent fallback,
+  /// not a crash, which is why it went unnoticed. The default is still right for
+  /// clean input; it is just not the comfortable margin it was documented as.
+  ///
+  /// Note also that this threshold is measured on *normalized* coordinates, where
+  /// x is a fraction of page width and y of page height. On A4 the same physical
+  /// 45-degree corner measures 0.615 rad travelling horizontally and 0.956 rad
+  /// travelling vertically, so at a given threshold the same corner is preserved
+  /// or smoothed depending on which way the pen happened to be going. Fixing that
+  /// means measuring the angle in a space where the page is square, which is a
+  /// separate change from this one and is not made here.
   static List<StrokePoint> smooth(
     List<StrokePoint> points, {
     int samplesPerSegment = 12,
     double cornerThresholdRadians = 0.7,
+    double maxSegmentLength = 0.004,
   }) {
     if (points.length < 3 || samplesPerSegment < 1) {
       return List<StrokePoint>.unmodifiable(points);
@@ -67,8 +107,72 @@ abstract final class StrokeConditioner {
       output.addAll(
         run.length < 3
             ? run
-            : _splineRun(run, samplesPerSegment: samplesPerSegment),
+            : _splineRun(
+                _respace(run, maxSegmentLength),
+                samplesPerSegment: samplesPerSegment,
+              ),
       );
+    }
+
+    return List<StrokePoint>.unmodifiable(output);
+  }
+
+  /// Re-spaces a run so no segment dwarfs its neighbours, keeping every vertex.
+  ///
+  /// Uniform Catmull-Rom takes its tangent at a control point from the chord
+  /// *across* that point's neighbours, `(p[i+1] - p[i-1]) / 2`, which is
+  /// proportional to the long segment even when the segment it is about to draw
+  /// is tiny. A long leg followed by a short one therefore leaves the run
+  /// heading off along the long leg's direction and forces it back onto the next
+  /// point: a hook several times the length of the short segment. That is the
+  /// "lasso" of issue #4, and it is invisible on evenly-spaced input, which is
+  /// why every fixture from issue #1 missed it.
+  ///
+  /// Measured on the control polygon `(0.5,0.5) -> (0.5,0.4) -> (0.5002,0.3995)`:
+  /// the `p1 -> p2` segment is 0.00054 long and the spline passes 0.0070 below
+  /// it, roughly 13x the segment. Fingers decelerate before lifting, so this
+  /// shape is the *common* end of a stroke rather than a corner case.
+  ///
+  /// Walking the polyline at a fixed arc length and emitting the original
+  /// vertices *alongside* the new samples bounds the excursion at roughly
+  /// `maxSegmentLength / 2`. Emitting the originals is what keeps this
+  /// re-spacing and not decimation: a corner vertex is a run boundary, and
+  /// dropping it because it fell between two samples would reintroduce exactly
+  /// the faceting that corner splitting exists to avoid.
+  static List<StrokePoint> _respace(
+    List<StrokePoint> points,
+    double maxSegmentLength,
+  ) {
+    if (points.length < 3 || maxSegmentLength <= 0) return points;
+
+    final output = <StrokePoint>[points.first];
+    for (var i = 1; i < points.length; i++) {
+      final a = points[i - 1].position;
+      final b = points[i].position;
+      final length = a.distanceTo(b);
+
+      // Short enough already, and adding samples here could only duplicate
+      // vertices that `simplify` would remove again later.
+      if (length <= maxSegmentLength) {
+        output.add(points[i]);
+        continue;
+      }
+
+      final steps = (length / maxSegmentLength).ceil();
+      for (var step = 1; step < steps; step++) {
+        final t = step / steps;
+        output.add(
+          StrokePoint(
+            position: NormalizedPoint(
+              a.x + (b.x - a.x) * t,
+              a.y + (b.y - a.y) * t,
+            ),
+            pressure: _lerp(points[i - 1].pressure, points[i].pressure, t),
+          ),
+        );
+      }
+      // The original vertex, not a resampled approximation of it.
+      output.add(points[i]);
     }
 
     return List<StrokePoint>.unmodifiable(output);
@@ -192,7 +296,16 @@ abstract final class StrokeConditioner {
   /// Thin, then smooth, then simplify.
   ///
   /// The order is load-bearing and was originally the reverse, which turned
-  /// every sharp direction change into a loop.
+  /// every sharp direction change into a loop (issue #1).
+  ///
+  /// Reordering was necessary but not sufficient (issue #4): uniform Catmull-Rom
+  /// still hooks on unevenly-spaced input, because its tangent at a control point
+  /// comes from the chord across that point's neighbours. `thin` guarantees a
+  /// *minimum* spacing and nothing more, so a stroke drawn fast and then settled
+  /// reaches the spline with one segment orders of magnitude shorter than the one
+  /// before it. `smooth` re-spaces each run to `[maxSegmentLength]`, which bounds
+  /// the excursion at about half that. Measured on the fixture that used to stray
+  /// 0.0086 from the finger's path: now 0.0001.
   ///
   /// Simplifying *before* smoothing is destructive. Ramer-Douglas-Peucker
   /// collapses a straight run to its two endpoints, so a mark that turns one
@@ -215,11 +328,16 @@ abstract final class StrokeConditioner {
     required double minDistance,
     required double simplifyTolerance,
     int samplesPerSegment = 12,
+    double? maxSegmentLength,
   }) {
     return simplify(
       smooth(
         thin(points, minDistance: minDistance),
         samplesPerSegment: samplesPerSegment,
+        // Tied to the caller's own spacing knob rather than exposed separately:
+        // the caller already states how finely it wants this stroke sampled, and
+        // one number to reason about beats two that can disagree.
+        maxSegmentLength: maxSegmentLength ?? minDistance * 2,
       ),
       tolerance: simplifyTolerance,
     );
