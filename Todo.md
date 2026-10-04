@@ -499,5 +499,10 @@ Audited 2026-09-30. **No current choice blocks iOS.**
   on Dart 3.13, so neither is usable. `dart_midi_pro` worked but had ~23 downloads/month. We own the
   *parser*; the *synth* stays FluidSynth behind an interface, because owning a wrapper around someone
   else's synth would buy nothing.
+- **`android:label` is hand-set, not derived.** `flutter create` copied it from the pubspec `name:`
+  (`fermata`, which has to be a legal Dart identifier), so the launcher read "fermata" in the app
+  drawer. Fixed to `"Fermata"` (issue #3). Renaming the pubspec `name:` will *not* fix this — that
+  field has to stay a valid identifier, so the label in `AndroidManifest.xml` is the only place the
+  display name lives, and the two will drift apart on every future rename.
 - **An earlier draft of this file credited `pdfx` and assumed a fresh single-package project.** Both
   wrong: the real repo is a pub workspace using `pdfrx`. Corrected after reading the code.
