@@ -3,6 +3,10 @@ description: "Fermata - a sheet music keeping and practice app"
 publish_to: 'none'
 
 version: 1.0.0+1
+# Obtainium compares a release tag against the installed versionName to decide
+# whether an update exists, and Android compares versionCode to decide whether
+# an install is an upgrade. Bump the `+N` on every release; see
+# docs/obtainium.md.
 
 resolution: workspace
 
@@ -57,3 +61,9 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
+
+  # Obtainium's app config. Single source of truth for the `obtainium://` deep
+  # link built in `update/obtainium_app.dart`; docs/obtainium.md points here
+  # rather than repeating the JSON.
+  assets:
+    - assets/distribution/obtainium_config.json

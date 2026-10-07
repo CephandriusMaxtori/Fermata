@@ -550,6 +550,15 @@ Audited 2026-09-30. **No current choice blocks iOS.**
 
 ## Notes / deviations
 
+- **Obtainium is the update channel, and `INTERNET` is the cost of an in-app check.** Not a
+  `DESIGN.md` departure — §4's "no store, sideload only" left the *mechanism* open, and Obtainium is
+  the one that installs from the project's own releases. Two halves, deliberately separable:
+  `.github/workflows/release.yml` publishes a signed APK on a `v*` tag (the distribution side), and
+  `app/lib/src/update/` deep-links into Obtainium from Settings (the hand-off). The in-app GitHub
+  check is why the app needs a network permission it otherwise would not; the release half needs
+  none. If the permission ever has to go, delete `updateCheckProvider` and keep
+  `ObtainiumApp` — Obtainium's background poller already does the checking.
+  See [`docs/obtainium.md`](docs/obtainium.md).
 - **Workspace, not a single package.** `DESIGN.md` §7's layering is realised as three packages
   (`fermata_core` / `fermata_data` / `app`) rather than folders.
 - **`pdfrx`, not the `pdfx`/`syncfusion_flutter_pdfviewer` candidates in §5.** §5 predates this

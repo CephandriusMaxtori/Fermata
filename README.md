@@ -28,6 +28,7 @@ fermata_workspace/
 - **High-Performance PDF Viewer**: Custom PDF page rendering via `pdfrx` with size-keyed raster caches and cancellation tokens.
 - **Annotation Engine v1**: Multi-layer ink persistence (compact 1/10000 integer JSON), RDP simplification, Catmull-Rom smoothing, pen and highlighter tools with 2-pass Z-ordering (`BlendMode.multiply`).
 - **MIDI Layer**: Custom lossless Standard MIDI File (SMF) reader supporting running status, VLQ, zero-velocity note-offs, time/tempo maps, and score interpretation.
+- **Sideloaded Updates**: Releases are published as signed APKs on GitHub Releases and installed through [Obtainium](https://obtainium.imranr.dev/), with a deep link from Settings. See [`docs/obtainium.md`](docs/obtainium.md).
 - **Tags & Setlists**: Case-insensitive unique tags and ordered setlists with drag-and-drop reordering and contiguous position management.
 - **Practice & Pedal Mappings**: Configurable page-turn pedal bindings via `HardwareKeyboard` and practice organization.
 

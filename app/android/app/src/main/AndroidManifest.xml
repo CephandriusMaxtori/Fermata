@@ -1,4 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The only permission Fermata declares.
+         It exists for one request: reading our own GitHub releases to tell the
+         user that an update exists and hand off to Obtainium. Nothing else
+         talks to the network - scores, MIDI and annotations are all local
+         files under the library root. Debug and profile builds already get this
+         from the Flutter tooling, so a release build would be the one that
+         silently could not check. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="Fermata"
         android:name="${applicationName}"
@@ -40,6 +49,22 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+
+        <!-- Package visibility, Android 11+. `MainActivity.openUri` decides
+             between "opened" and "nothing on this device wants this" by
+             catching ActivityNotFoundException, which needs no visibility - but
+             `resolveActivity` does, and an unqualified "no handler" answer is
+             exactly the kind of thing that turns into a silently dead button.
+             The obtainium scheme is the hand-off; https is for falling back to
+             the Obtainium website and a release page when it is not installed. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="obtainium"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="https"/>
         </intent>
     </queries>
 </manifest>

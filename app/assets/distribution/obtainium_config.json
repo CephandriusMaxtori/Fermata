@@ -1,0 +1,11 @@
+{
+  "id": "com.hoid.fermata",
+  "url": "https://github.com/CephandriusMaxtori/Fermata",
+  "author": "CephandriusMaxtori",
+  "name": "Fermata",
+  "additionalSettings": {
+    "apkFilterRegEx": "Fermata-[0-9.]+\\.apk",
+    "includePrereleases": false,
+    "sortMethodChoice": "smartname-datefallback"
+  }
+}

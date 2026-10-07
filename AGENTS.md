@@ -74,6 +74,13 @@ Two things to know if you touch it: `dart test` at the workspace root fails
 pins a Flutter minor series rather than `stable` so a Flutter release cannot turn
 `main` red.
 
+`.github/workflows/release.yml` runs on a `v*` tag and publishes the APK that
+Obtainium installs. Its first job **fails if the tag disagrees with `version:` in
+`app/pubspec.yaml`**, which is not ceremony: Obtainium compares the tag against
+the installed `versionName`, and Android compares `versionCode`, so a mismatched
+tag yields an app that advertises an update forever and installs nothing. Full
+release procedure in [`docs/obtainium.md`](docs/obtainium.md).
+
 ## Commands
 
 The repo is a single **Dart pub workspace** (`pubspec.yaml:10-13`), so one resolution covers all
@@ -215,7 +222,8 @@ These are the things that silently break if you "clean them up".
 
 ## Conventions
 
-- **Commands:** root `dart analyze`/`dart test`; `cd app && flutter test`. No CI yet.
+- **Commands:** root `dart analyze`/`dart test`; `cd app && flutter test`. Both CI workflows run on
+  every push (`ci.yml`; `release.yml` only on `v*` tags).
 - **Naming:** `snake_case.dart`; interfaces have no suffix (`ScoreRepository`, not
   `IScoreRepository`); implementations are `Drift` + interface name. Constants are `kCamelCase`.
   Providers are `<thing>Provider`, notifiers `<Thing>Notifier`.
@@ -242,12 +250,24 @@ These are the things that silently break if you "clean them up".
   `use_build_context_synchronously`). Turning it on immediately found a floating
   `pdfrxFlutterInitialize()` future in `pdfrx_page_renderer.dart`, which let a score open race
   pdfrx's native initialisation.
-- **Zero Android permissions are declared.** No `INTERNET`, no storage, no Bluetooth. `file_picker`
-  uses SAF so none are needed today; pedal support will require adding Bluetooth ones. Don't add
-  permissions speculatively.
+- ~~**Zero Android permissions are declared.**~~ **One now: `INTERNET`, 2026-10-06.** It exists
+  solely for the GitHub-releases update check (`app/lib/src/update/update_service.dart`), which
+  feeds the Obtainium hand-off. Still no storage and no Bluetooth: `file_picker` uses SAF, and
+  pedal support will require adding Bluetooth ones. Don't add permissions speculatively — if a
+  new feature can be served from a deep link instead of a fetch, prefer the deep link.
 - **`minSdk = 24`** was chosen for the *planned* MIDI/soundfont plugins
-  (`app/android/app/build.gradle.kts:19-21`). Release builds are signed with **debug keys**
-  (`build.gradle.kts:29-31`) — the one literal TODO outside Dart.
+  (`app/android/app/build.gradle.kts:19-21`).
+- **Release signing comes from `key.properties`, not the repo.** Obtainium replaces the APK in
+  place, so a key that differs between two releases breaks the second install on every device.
+  `build.gradle.kts` reads the file and **falls back to the debug key when it is absent**, so a
+  contributor without a keystore can still `flutter run --release`. That fallback is scoped: a
+  debug-signed release cannot be updated by a CI-signed one, so it only ever runs on a developer
+  device. See [`docs/obtainium.md`](docs/obtainium.md) for the one-time secret setup.
+- **`version:` in `app/pubspec.yaml` is load-bearing twice.** The name is compared against the
+  release tag (Obtainium's version detection) and the `+code` must increase for Android to treat
+  an install as an upgrade. `.github/workflows/release.yml` fails the build if the tag and pubspec
+  disagree, precisely because the failure mode otherwise is "reports an update forever, installs
+  nothing".
 - **Providers live in two places** — `src/providers/library_providers.dart` (infrastructure) and
   feature files (`library_screen.dart`, `page_stack.dart`). Inconsistent, but the viewer-local ones
   are deliberate: resolving them in the widget would need restructuring when layers land.

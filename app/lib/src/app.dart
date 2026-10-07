@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import 'features/library/library_screen.dart';
 import 'features/setlists/setlists_screen.dart';
+import 'features/settings/settings_screen.dart';
 import 'features/viewer/score_viewer_screen.dart';
 import 'theme/fermata_theme.dart';
 
@@ -45,13 +46,7 @@ class _AppShellState extends State<AppShell> {
         children: [
           LibraryScreen(onOpenScore: _openScore),
           SetlistsScreen(onOpenScore: _openScore),
-          const _PlaceholderTab(
-            icon: Icons.settings_rounded,
-            title: 'Settings',
-            message:
-                'Pedal mappings, text scaling and backup live here once the '
-                'viewer is in place.',
-          ),
+          const SettingsScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -82,52 +77,6 @@ class _AppShellState extends State<AppShell> {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ScoreViewerScreen(scoreId: score.id, title: score.title),
-      ),
-    );
-  }
-}
-
-class _PlaceholderTab extends StatelessWidget {
-  const _PlaceholderTab({
-    required this.icon,
-    required this.title,
-    required this.message,
-  });
-
-  final IconData icon;
-  final String title;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return SafeArea(
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                icon,
-                size: 48,
-                color: theme.colorScheme.onSurfaceVariant.withValues(
-                  alpha: 0.5,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(title, style: theme.textTheme.titleLarge),
-              const SizedBox(height: 6),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

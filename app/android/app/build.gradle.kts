@@ -24,11 +24,39 @@ android {
         versionName = flutter.versionName
     }
 
+    // Release signing is read from key.properties rather than committed, because
+    // Obtainium replaces this APK in place: a key that differs between two
+    // releases makes the second install fail on every device. The secret has to
+    // be stable forever, which means it cannot live in the repo.
+    //
+    // The debug fallback is deliberate and not a placeholder. A contributor with
+    // no keystore can still `flutter run --release`, and the cost is confined:
+    // a debug-signed release cannot be updated by a CI-signed one, so it only
+    // ever runs on a developer device. See docs/obtainium.md.
+    val keystoreProperties = java.util.Properties().apply {
+        val file = rootProject.file("key.properties")
+        if (file.exists()) {
+            file.inputStream().use { load(it) }
+        }
+    }
+    signingConfigs {
+        if (keystoreProperties.isNotEmpty()) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystoreProperties.isNotEmpty()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }
