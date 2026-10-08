@@ -8,6 +8,11 @@ const _config = ObtainiumApp(
   url: 'https://github.com/CephandriusMaxtori/Fermata',
   author: 'CephandriusMaxtori',
   name: 'Fermata',
+  appSource: 'GitHub',
+  additionalSettings: {
+    'apkFilterRegEx': 'Fermata-[0-9.]+\\.apk',
+    'includePrereleases': false,
+  },
 );
 
 void main() {
@@ -18,12 +23,18 @@ void main() {
         'url': 'https://github.com/CephandriusMaxtori/Fermata',
         'author': 'CephandriusMaxtori',
         'name': 'Fermata',
+        'appSource': 'GitHub',
+        'additionalSettings': {
+          'apkFilterRegEx': 'Fermata-[0-9.]+\\.apk',
+        },
       });
 
       expect(app.id, 'com.hoid.fermata');
       expect(app.name, 'Fermata');
       expect(app.author, 'CephandriusMaxtori');
       expect(app.url, 'https://github.com/CephandriusMaxtori/Fermata');
+      expect(app.appSource, 'GitHub');
+      expect(app.additionalSettings?['apkFilterRegEx'], 'Fermata-[0-9.]+\\.apk');
     });
 
     test('rejects a config missing the package id', () {
@@ -82,6 +93,8 @@ void main() {
       expect(decoded['id'], 'com.hoid.fermata');
       expect(decoded['name'], 'Fermata');
       expect(decoded['url'], 'https://github.com/CephandriusMaxtori/Fermata');
+      expect(decoded['appSource'], 'GitHub');
+      expect(decoded['additionalSettings'], isNotNull);
     });
 
     test('leaves no unencoded JSON punctuation in the path', () {
@@ -100,6 +113,7 @@ void main() {
       expect(_config.toJson().indexOf('"id"'), lessThan(_config.toJson().indexOf('"url"')));
       expect(_config.toJson().indexOf('"url"'), lessThan(_config.toJson().indexOf('"author"')));
       expect(_config.toJson().indexOf('"author"'), lessThan(_config.toJson().indexOf('"name"')));
+      expect(_config.toJson().indexOf('"name"'), lessThan(_config.toJson().indexOf('"appSource"')));
     });
   });
 

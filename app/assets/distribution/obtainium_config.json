@@ -3,6 +3,7 @@
   "url": "https://github.com/CephandriusMaxtori/Fermata",
   "author": "CephandriusMaxtori",
   "name": "Fermata",
+  "appSource": "GitHub",
   "additionalSettings": {
     "apkFilterRegEx": "Fermata-[0-9.]+\\.apk",
     "includePrereleases": false,

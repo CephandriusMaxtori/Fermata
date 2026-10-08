@@ -18,6 +18,8 @@ class ObtainiumApp {
     required this.url,
     required this.author,
     required this.name,
+    this.appSource,
+    this.additionalSettings,
   });
 
   /// The package name Obtainium files the app under.
@@ -34,12 +36,20 @@ class ObtainiumApp {
   final String author;
   final String name;
 
+  /// Explicit app source (e.g. "GitHub").
+  final String? appSource;
+
+  /// Additional settings for Obtainium (e.g. apkFilterRegEx).
+  final Map<String, Object?>? additionalSettings;
+
   factory ObtainiumApp.fromJson(Map<String, Object?> json) {
     return ObtainiumApp(
       id: _requiredString(json, 'id'),
       url: _requiredString(json, 'url'),
       author: _requiredString(json, 'author'),
       name: _requiredString(json, 'name'),
+      appSource: json['appSource'] as String?,
+      additionalSettings: (json['additionalSettings'] as Map?)?.cast<String, Object?>(),
     );
   }
 
@@ -49,12 +59,21 @@ class ObtainiumApp {
   /// asset round-trips byte-identically. Obtainium shows the raw JSON on its
   /// confirmation dialog, and a payload that reorders itself between the asset
   /// file and the hand-off would make that dialog unreviewable.
-  String toJson() => const JsonEncoder.withIndent('  ').convert({
-    'id': id,
-    'url': url,
-    'author': author,
-    'name': name,
-  });
+  String toJson() {
+    final map = <String, Object?>{
+      'id': id,
+      'url': url,
+      'author': author,
+      'name': name,
+    };
+    if (appSource != null) {
+      map['appSource'] = appSource;
+    }
+    if (additionalSettings != null && additionalSettings!.isNotEmpty) {
+      map['additionalSettings'] = additionalSettings;
+    }
+    return const JsonEncoder.withIndent('  ').convert(map);
+  }
 
   /// `obtainium://app/<config>` — opens Obtainium's Add App screen.
   ///
