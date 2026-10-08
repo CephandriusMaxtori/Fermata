@@ -15,7 +15,7 @@ discovered work, and log deviations at the bottom.
 
 All items below were verified by reading the implementation, not inferred from file names.
 
-**Baseline: `flutter analyze` clean, 193 tests passing** (15 `app` + 111 `fermata_core` + 67 `fermata_data`).
+**Baseline: `flutter analyze` clean, 301 tests passing** (84 `app` + 149 `fermata_core` + 68 `fermata_data`).
 Note `dart test` at the workspace root fails — it needs a reporter arg; run it per package.
 
 Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/smf/`:
@@ -231,30 +231,52 @@ digitally-engraved PDFs and **fails outright on a scan, a vector-only export, or
 with no text layer** — the last being the common case for printed music. This is a progressive
 enhancement, never a foundation.
 
-- [ ] **Bar detection has never been verified against a real engraved score.** Checked 2026-10-03 by
+- [x] **`BarDetector` removed: it had never worked on a single score** (2026-10-08). It read the page's
+  text layer and treated wide horizontal gaps in a run of ink as barlines. Checked 2026-10-03 by
   inspecting the raw bytes of every score PDF on this machine — `Mercy mercy mercy full score 1.pdf`
   (5.2 MB), `phinneasrabies25.pdf` (176 KB), `sheet.pdf` (3 KB). **All three have no text layer:**
   zero case-insensitive matches for `font`, `/FontDescriptor`/`/BaseFont`/`/Widths` all absent, and
   `/DCTDecode` present, i.e. the music is an embedded JPEG of a printed page. So every score the
   project has actually been tried against is a scan, and detection has never once returned a bar.
-  The thresholds in `BarDetector` (`_kBarGapFactor`, `_kMinRunsPerWidth`, `_kMinSystemHeight`) are
-  therefore **unvalidated**, and issue #2 was closed as working on the strength of the code reading
-  correctly, not on a score where it did. Get a digitally-engraved PDF and confirm before trusting it.
+  The thresholds in `BarDetector` (`_kBarGapFactor`, `_kMinRunsPerWidth`, `_kMinSystemHeight`) were
+  therefore **never validated**, and issue #2 had been closed as working on the strength of the code
+  reading correctly, not on a score where it did. Shipping a feature whose only observable behaviour
+  was "off" is worse than not shipping it: the viewer offered a "By bar" toggle that did nothing.
   How to tell: a text-layer PDF contains `/Font` and `/BaseFont`; a scan contains `/Image` and
   `/DCTDecode` and no font keys at all.
 
-  - The exact answer is in the page's vector drawing operators. **pdfrx does not currently expose
-    them.** When it does, it should replace `fermata_core/lib/src/measure/` outright rather than be
-    merged in: "glyph gaps" and "actual strokes" are different sources of truth, and averaging them is
-    worse than either.
+  - **Kept deliberately:** `bar_layout.dart` (`TextRun`, `StaffSystem`, `BarLayout`), all of
+    `bar_cursor.dart`, the navigation bar UI, and `PageRenderer.barLayout` — which now returns
+    `BarLayout.empty` for every page. That interface is the seam a source with real positions drops
+    into without the viewer, `BarNavigator` or the UI changing. `PdfrxPageRenderer.textRunsFrom` is
+    also kept although nothing calls it: it is the only PDF-space to normalized-space conversion in
+    the codebase and any future source needs it, pinned by nine tests.
+  - **Why not delete the whole feature:** the navigation model is sound and fully tested; only the
+    *source* of bar positions was wrong. Throwing that away means rebuilding it.
+  - **The replacement is not OMR's MusicXML.** `DESIGN.md` §9A scopes homr for playback and the piano
+    visualizer, which is right — but MusicXML is a logical format: `<measure>` says "measure 12", not
+    "measure 12 at x=0.46 of page 3". There is no page, system or x-coordinate anywhere in it, so
+    measures have to be mapped back onto the page before they can drive navigation. homr's UNet stage
+    *does* find the bar lines in pixel space and discards them when it writes MusicXML; that output is
+    the actual prize. Three routes, none settled — see `bar-scribe-design.md`.
+  - **Open question worth taking seriously:** whether bar-by-bar is worth having without exact
+    positions at all. Page turning plus a measure-count readout is cheaper and works on every score
+    instead of none.
+  - Still true of the vector route: the exact answer is in the page's vector drawing operators, and
+    **pdfrx does not currently expose them.** When it does, it should replace
+    `fermata_core/lib/src/measure/` outright rather than be merged in: "glyph gaps" and "actual
+    strokes" are different sources of truth, and averaging them is worse than either.
 
   - Lyrics are excluded by requiring a band to be tall enough to hold several staff lines, which a line
-  of lyrics never is. A one-line title is excluded the same way.
+  of lyrics never is. A one-line title is excluded the same way. *(How `BarDetector` kept sung text
+  out of the layout; still the rule a future source should follow.)*
   - A system of *uniformly* spaced glyphs yields **one** bar, because no gap stands out. Inventing
-  barlines by dividing the row evenly would be worse than admitting there is one. Pinned by
-    `bar_detector_test.dart`, deliberately.
+  barlines by dividing the row evenly would be worse than admitting there is one. **This rule still
+  binds whatever replaces the detector** — it is what rules out the "divide each system evenly by
+  its measure count" route in `bar-scribe-design.md`.
 
-Design notes worth keeping:
+Design notes worth keeping (`BarNavigator`, retained — these are independent of where the positions
+came from):
 
   - `BarNavigator` carries `(page, system, bar)` rather than a flat index across the score. Layouts are
     discovered per page and asynchronously, so a flat count has to be rebuilt whenever any page
@@ -537,13 +559,29 @@ Audited 2026-09-30. **No current choice blocks iOS.**
 | Pedal hardware is device-dependent | Mitigation planned: on-screen fallback everywhere. |
 | Android-only plugins block iOS | **Resolved** — audit found none. |
 | OMR runtime mismatch + AGPL-3.0 | Go/no-go before commitment. |
-| No CI | **Resolved** — `.github/workflows/ci.yml`: analyze, per-member tests, debug APK. First run passed; actions bumped off deprecated versions and the runner pinned to `ubuntu-24.04`. |
+| No CI | **Resolved** — `.github/workflows/ci.yml`: analyze, per-member tests, debug APK. Runner pinned to `ubuntu-24.04`. Both workflows green as of 2026-10-08; the release workflow had been failing to start since a Discord step referenced `secrets` in an `if`, which is not an allowed context there. |
+| Bar-by-bar view never worked | **Resolved by removal** — `BarDetector` deleted 2026-10-08; every score on this machine is a scan with no text layer, so it had never returned a bar. Seam retained for a coordinate-bearing source. |
 | 16 KB page sizes | Not enforced (no Play Store). Revisit only if distribution changes. |
 
 ---
 
 ## Notes / deviations
 
+- **`BarDetector` removed in favour of feeding bar positions from OMR** (2026-10-08). Not a
+  `DESIGN.md` departure — the design never promised a detection method — but it does reverse
+  `bar-scribe-design.md` v2, which proposed a browser tool to find barlines in scans. That tool was
+  never built, so nothing was undone. **The departure worth recording:** the project's position is now
+  that bar-by-bar navigation needs *page coordinates*, and OMR's MusicXML does not have them, so
+  "use OMR" does not by itself restore bar-by-bar view. The navigation model
+  (`bar_layout.dart`, `bar_cursor.dart`, the UI, `PageRenderer.barLayout`) is retained unchanged and
+  `barLayout()` returns `BarLayout.empty` for every page until a coordinate-bearing source exists.
+  `DESIGN.md` §9A's homr work is unaffected — it is scoped for playback and the piano visualizer,
+  which MusicXML does fully serve. See `bar-scribe-design.md` for the three candidate routes.
+- **`org.gradle.caching=true`, and no NDK cache** (2026-10-08). The NDK is 13.6s of a 3m24s
+  `Build debug APK` job, but the unpacked NDK is ~2.9GB and `actions/cache` would move more bytes
+  than the download it replaces. The Gradle build cache targets the ~98s of gradle work around it and
+  needs no new cache step, since `~/.gradle/caches/build-cache-1` is already inside the tree
+  `actions/setup-java`'s `cache: gradle` preserves.
 - **Obtainium is the update channel, and `INTERNET` is the cost of an in-app check.** Not a
   `DESIGN.md` departure — §4's "no store, sideload only" left the *mechanism* open, and Obtainium is
   the one that installs from the project's own releases. Two halves, deliberately separable:

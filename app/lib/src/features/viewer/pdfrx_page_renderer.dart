@@ -114,52 +114,43 @@ class PdfrxPageRenderer implements PageRenderer {
     return image;
   }
 
-  /// Finds bar positions by reading the page's text layer.
+  /// Always [BarLayout.empty]: there is no positional source wired up.
   ///
-  /// Three things this deliberately does not do:
+  /// This used to run `BarDetector` over the page's text layer. That was removed
+  /// on 2026-10-08, and the reason is worth keeping, because it is not a bug in
+  /// the heuristic — the heuristic never received an input it could work on.
+  /// Every score PDF checked on this machine (three of them) is a scan with an
+  /// embedded JPEG and zero `/Font` entries, so `loadText()` returned nothing
+  /// and every page answered "no staff". The thresholds had never been
+  /// validated against real engraving. See `bar-scribe-design.md`.
   ///
-  ///  * **No scan handling.** A scanned score has no text layer, so this returns
-  ///    [BarLayout.empty] and the viewer keeps page turning. Trying to read bar
-  ///    positions off a scan means image processing, which is a different feature.
-  ///  * **No caching of failures as successes.** An empty result is cached just
-  ///    like a non-empty one, because "this page has no staff" is a stable fact
-  ///    about the file and re-running extraction on every step would stutter.
-  ///  * **No fallback that guesses.** See `BarDetector` for why a heuristic is
-  ///    already the most this can honestly do.
+  /// The interface method stays, deliberately. A source that *does* know where
+  /// the barlines are on the page — an OMR run that emits coordinates, or a
+  /// sidecar — is a one-implementation change here, and the viewer, the
+  /// navigation bar and `BarNavigator` all sit downstream of this seam already.
+  ///
+  /// Note that MusicXML is not such a source: it is a logical format with
+  /// `<measure>` elements and no page coordinates, and `StaffSystem.barRange`
+  /// returns fractions of page width because the viewer scrolls the original
+  /// raster. Measures have to be mapped back onto the page before they can drive
+  /// navigation.
   @override
   Future<BarLayout> barLayout(ScorePage page) async {
-    if (page.kind != PageSourceKind.pdf) return BarLayout.empty;
-
-    final cached = _barLayouts[page.id];
-    if (cached != null) return cached;
-
-    final BarLayout layout;
-    try {
-      final document = await _documentFor(_absolutePath(page));
-      final pdfPage = document.pages[(page.pdfPageNumber ?? 1) - 1];
-      final geometry = await this.geometry(page);
-      if (geometry == null || geometry.widthPt <= 0 || geometry.heightPt <= 0) {
-        return _barLayouts[page.id] = BarLayout.empty;
-      }
-      final text = await pdfPage.loadText();
-      layout = text == null
-          ? BarLayout.empty
-          : BarDetector.detect(textRunsFrom(text, geometry));
-    } on Object {
-      // A page that cannot be parsed for text is simply a page without bars.
-      // Letting this throw would take the whole viewer down over a navigation
-      // convenience, so the failure is absorbed here and reported as "no staff".
-      return _barLayouts[page.id] = BarLayout.empty;
-    }
-
-    return _barLayouts[page.id] = layout;
+    return _barLayouts[page.id] = BarLayout.empty;
   }
 
   /// Characters are grouped into runs on whitespace and on large horizontal
-  /// jumps. Grouping matters because a barline gap is measured between *runs* of
-  /// ink: passing single characters through would let the gap inside a word
-  /// register as a barline. Run bounds are accumulated as the run grows rather
-  /// than rescanning, so this stays linear in the character count.
+  /// jumps.
+  ///
+  /// Kept even though nothing calls it yet. This is the only conversion in the
+  /// codebase from PDF-space (bottom-left origin, points) to `fermata_core`'s
+  /// page-relative normalized space, it is the piece any future positional
+  /// source needs, and it is pinned by nine tests in
+  /// `pdfrx_text_conversion_test.dart`. Deleting it would throw away tested
+  /// geometry to avoid keeping an adapter.
+  ///
+  /// Run bounds are accumulated as the run grows rather than rescanning, so
+  /// this stays linear in the character count.
   @visibleForTesting
   static List<TextRun> textRunsFrom(PdfPageRawText text, PageGeometry geometry) {
     final runs = <TextRun>[];

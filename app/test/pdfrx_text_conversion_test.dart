@@ -24,6 +24,12 @@ PdfPageRawText raw(List<PdfRect> rects) =>
     PdfPageRawText('a' * rects.length, rects);
 
 void main() {
+  // Only the PDF-space -> normalized-space conversion is covered here. The
+  // end-to-end "runs become bars" case was removed with `BarDetector` on
+  // 2026-10-08; it could only ever assert against synthetic glyph rows, because
+  // no real score on this machine has a text layer to convert. What it did pin —
+  // the origin flip, run grouping and clamping below — is what a future
+  // positional source depends on, so that part stays.
   group('PdfrxPageRenderer.textRunsFrom', () {
     test('flips PDF\'s bottom-left origin into page-relative top-left', () {
       // y=900..950 in PDF space is the top 5% of a 1000pt page, and must come
@@ -173,28 +179,6 @@ void main() {
         PdfrxPageRenderer.textRunsFrom(PdfPageRawText('', const []), page),
         isEmpty,
       );
-    });
-  });
-
-  group('bar detection on converted runs', () {
-    test('a run of notes becomes bars a navigator can step through', () {
-      // End-to-end over the conversion: two measures separated by a gap.
-      final rects = <PdfRect>[
-        for (var i = 0; i < 12; i++)
-          rect(100 + i * 10, 900, 108 + i * 10, 950),
-        for (var i = 0; i < 12; i++)
-          rect(700 + i * 10, 900, 708 + i * 10, 950),
-      ];
-
-      final layout = BarDetector.detect(
-        PdfrxPageRenderer.textRunsFrom(
-          PdfPageRawText('x' * rects.length, rects),
-          page,
-        ),
-      );
-
-      expect(layout.hasStaff, isTrue);
-      expect(layout.barCount, greaterThanOrEqualTo(2));
     });
   });
 }
