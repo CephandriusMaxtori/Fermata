@@ -22,6 +22,14 @@ dependencies:
   # package and would clash with our Material 3 / One UI styling.
   pdfrx: ^2.6.5
 
+  # MusicXML -> page images. Renders via crisp_notation's Bravura SMuFL font and
+  # exportScoreToPng, which needs Flutter because the font and its metadata are
+  # package assets that the pure-Dart crisp_notation_core cannot load itself.
+  # Pinned exactly rather than ^0.7.0: this package is a week old, so a caret
+  # range would let a breaking 0.x release change the APK without a commit here.
+  # Code is MIT, the bundled Bravura font is OFL. See docs/musicxml-import.md.
+  crisp_notation: 0.7.0
+
   # State management.
   flutter_riverpod: ^3.4.3
 

@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../repositories/annotation_repository.dart';
 import '../storage/file_hasher.dart';
 import '../storage/file_store.dart';
+import 'music_xml_rasteriser.dart';
 
 /// A file the user picked, before it has been inspected.
 class ImportCandidate {
@@ -31,6 +32,12 @@ class ImportCandidate {
 
   bool get isPdf => extension == '.pdf';
 
+  /// A MusicXML document, which is rendered to page images rather than shown as
+  /// a document. `.mxl` (the zipped container) is not accepted yet: plain XML is
+  /// what homr emits, and half-supporting the format is worse than a clear
+  /// rejection the user can act on.
+  bool get isMusicXml => extension == '.musicxml';
+
   /// Image formats the document picker is allowed to return.
   static const Set<String> supportedImageExtensions = {
     '.jpg',
@@ -43,11 +50,12 @@ class ImportCandidate {
 
   static const Set<String> supportedExtensions = {
     '.pdf',
+    '.musicxml',
     ...supportedImageExtensions,
   };
 
   bool get isSupported =>
-      isPdf || supportedImageExtensions.contains(extension);
+      isPdf || isMusicXml || supportedImageExtensions.contains(extension);
 }
 
 /// One file that was imported, and the pages it contributed.
@@ -57,6 +65,7 @@ class ImportedSource {
     required this.storedPath,
     required this.pageCount,
     required this.contentHash,
+    this.pageFiles = const [],
   });
 
   final String fileName;
@@ -66,6 +75,15 @@ class ImportedSource {
 
   final int pageCount;
   final String contentHash;
+
+  /// Score-relative path of each rendered page, parallel to [pageCount].
+  ///
+  /// Empty for a PDF or a copied image, where [storedPath] *is* every page.
+  /// Populated for MusicXML, whose pages are generated PNGs with no source file
+  /// of their own: the `.musicxml` is still copied and kept as [storedPath] for
+  /// provenance and a future re-render at higher resolution, but it is not what
+  /// a page row points at.
+  final List<String> pageFiles;
 }
 
 /// The result of a successful import.
@@ -125,13 +143,17 @@ class ImportService {
     required ScoreRepository scoreRepository,
     required FileStore fileStore,
     PdfPageCounter pdfPageCounter = const NullPdfPageCounter(),
+    MusicXmlPageRasteriser musicXmlRasteriser =
+        const NullMusicXmlPageRasteriser(),
   }) : _scores = scoreRepository,
        _files = fileStore,
-       _pdfPages = pdfPageCounter;
+       _pdfPages = pdfPageCounter,
+       _musicXml = musicXmlRasteriser;
 
   final ScoreRepository _scores;
   final FileStore _files;
   final PdfPageCounter _pdfPages;
+  final MusicXmlPageRasteriser _musicXml;
 
   /// Reports progress as files are processed.
   final _progress = StreamController<ImportProgress>.broadcast();
@@ -259,9 +281,32 @@ class ImportService {
         source: File(candidate.sourcePath),
         preferredName: candidate.fileName,
       );
-      final pageCount = candidate.isPdf
-          ? await _pdfPages.pageCount(candidate.sourcePath)
-          : 1;
+
+      // A MusicXML document is rendered to page images rather than displayed,
+      // so it contributes generated PNGs. The `.musicxml` itself stays copied as
+      // [storedPath]: it is the only record of what was rendered, and it is what
+      // a future higher-resolution re-render would read.
+      final List<String> renderedPageFiles;
+      final int pageCount;
+      if (candidate.isMusicXml) {
+        final render = await _renderMusicXml(candidate);
+        if (render.pages.isEmpty) {
+          throw ImportException(
+            '"${candidate.fileName}" rendered no pages.',
+          );
+        }
+        pageCount = render.pages.length;
+        renderedPageFiles = await _writeRenderedPages(
+          scoreId: scoreId,
+          storedPath: storedPath,
+          pages: render.pages,
+        );
+      } else {
+        pageCount = candidate.isPdf
+            ? await _pdfPages.pageCount(candidate.sourcePath)
+            : 1;
+        renderedPageFiles = const [];
+      }
       if (pageCount < 1) {
         throw ImportException(
           '"${candidate.fileName}" does not contain any pages.',
@@ -274,6 +319,7 @@ class ImportService {
           storedPath: storedPath,
           pageCount: pageCount,
           contentHash: hashes[candidate.sourcePath]!,
+          pageFiles: renderedPageFiles,
         ),
       );
     }
@@ -282,15 +328,19 @@ class ImportService {
     var pageIndex = 0;
     for (final source in sources) {
       final isPdf = source.fileName.toLowerCase().endsWith('.pdf');
-      for (var pdfPage = 1; pdfPage <= source.pageCount; pdfPage++) {
+      for (var page = 1; page <= source.pageCount; page++) {
+        // A rendered source has one generated file per page; every other source
+        // points every page at the single copied file.
+        final pagePath =
+            page <= source.pageFiles.length ? source.pageFiles[page - 1] : source.storedPath;
         pages.add(
           ScorePage(
             id: newId(),
             scoreId: scoreId,
             index: pageIndex++,
             kind: isPdf ? PageSourceKind.pdf : PageSourceKind.bitmap,
-            sourcePath: source.storedPath,
-            pdfPageNumber: isPdf ? pdfPage : null,
+            sourcePath: pagePath,
+            pdfPageNumber: isPdf ? page : null,
           ),
         );
       }
@@ -338,7 +388,50 @@ class ImportService {
     );
   }
 
-  DuplicateAssessment assess({
+  /// Renders [candidate], converting a rasteriser failure into an
+/// [ImportException] so the caller sees one error type.
+Future<MusicXmlRender> _renderMusicXml(ImportCandidate candidate) async {
+  try {
+    return await _musicXml.render(candidate.sourcePath);
+  } on MusicXmlRenderException catch (error) {
+    throw ImportException(error.message);
+  } on FormatException catch (error) {
+    // The reader throws this on a document it cannot represent. Naming the file
+    // matters more than the parser's wording: the user picked several files and
+    // needs to know which one to replace.
+    throw ImportException(
+      '"${candidate.fileName}" is not MusicXML that can be rendered: $error',
+    );
+  }
+}
+
+/// Writes rendered pages next to [storedPath] and returns their relative names.
+///
+/// Named after the source file rather than `page-1.png` so that a score whose
+/// pages were re-rendered later has the new images sit beside the ones they
+/// replace rather than colliding with them — and so a user browsing the score
+/// directory can tell which document a page came from.
+Future<List<String>> _writeRenderedPages({
+  required String scoreId,
+  required String storedPath,
+  required List<RenderedPage> pages,
+}) async {
+  final directory = _files.layout.scoreSourceDirectory(scoreId);
+  final stem = p.basenameWithoutExtension(storedPath);
+  final written = <String>[];
+
+  for (var i = 0; i < pages.length; i++) {
+    final name = '$stem-page-${i + 1}.png';
+    // writeAtomic, not a plain write: a thumbnail-style read may already be
+    // racing this, and a half-written PNG surfaces as a broken image rather than
+    // a missing one.
+    await _files.writeAtomic(p.join(directory, name), pages[i].pngBytes);
+    written.add(name);
+  }
+  return written;
+}
+
+DuplicateAssessment assess({
     required ImportCandidate candidate,
     required String contentHash,
     required List<Score> existing,

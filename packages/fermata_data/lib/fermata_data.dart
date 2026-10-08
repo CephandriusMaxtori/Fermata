@@ -9,6 +9,7 @@ export 'src/db/annotation_points_codec.dart';
 export 'src/db/app_database.dart';
 export 'src/db/tables.dart';
 export 'src/import/import_service.dart';
+export 'src/import/music_xml_rasteriser.dart';
 export 'src/repositories/annotation_repository.dart';
 export 'src/repositories/organization_repositories.dart';
 export 'src/repositories/score_repository.dart';

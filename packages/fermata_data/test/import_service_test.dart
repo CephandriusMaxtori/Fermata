@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 
@@ -51,6 +52,58 @@ ImportCandidate candidateFor(File file, {String? title, String? composer}) =>
       composer: composer,
     );
 
+/// A rasteriser that never touches crisp_notation.
+///
+/// The real one needs Flutter to load Bravura and rasterise, so the import
+/// rules around a rendered source — page rows, stored paths, error mapping —
+/// are pinned against this instead.
+class StubMusicXmlRasteriser implements MusicXmlPageRasteriser {
+  StubMusicXmlRasteriser({this.pages = 2, this.failWith, this.title, this.composer});
+
+  final int pages;
+
+  /// Thrown instead of rendering, to pin the error path.
+  final Object? failWith;
+
+  final String? title;
+  final String? composer;
+
+  /// Paths passed to [render], in call order.
+  final List<String> requested = [];
+
+  @override
+  Future<MusicXmlRender> render(String absolutePath) async {
+    requested.add(absolutePath);
+    final failure = failWith;
+    if (failure != null) throw failure;
+    return MusicXmlRender(
+      title: title,
+      composer: composer,
+      pages: [
+        for (var i = 0; i < pages; i++)
+          RenderedPage(
+            // Distinct bytes per page, so a test can prove page N points at
+            // image N rather than every row sharing the first one.
+            pngBytes: utf8.encode('png-page-${i + 1}'),
+            widthPx: 1240,
+            heightPx: 1754,
+          ),
+      ],
+    );
+  }
+}
+
+ImportService makeServiceWithMusicXml(StubMusicXmlRasteriser rasteriser) =>
+    ImportService(
+      scoreRepository: scores,
+      fileStore: store,
+      pdfPageCounter: StubPdfPageCounter(),
+      musicXmlRasteriser: rasteriser,
+    );
+
+Future<File> makeMusicXml(String name, {List<int>? bytes}) async =>
+    makeFile(name, bytes ?? utf8.encode('<score-partwise/>'));
+
 void main() {
   setUp(() async {
     root = await Directory.systemTemp.createTemp('fermata_import_test_');
@@ -65,6 +118,175 @@ void main() {
   tearDown(() async {
     await database.close();
     if (root.existsSync()) await root.delete(recursive: true);
+  });
+
+  group('MusicXML import', () {
+    test('a .musicxml candidate is recognised as supported', () {
+      expect(
+        ImportCandidate(sourcePath: p.join('a', 'b.musicxml')).isMusicXml,
+        isTrue,
+      );
+      expect(
+        ImportCandidate(sourcePath: p.join('a', 'b.musicxml')).isSupported,
+        isTrue,
+      );
+    });
+
+    test('the zipped .mxl container is not yet accepted', () {
+      // Deliberate: plain XML is what homr emits, and a clear rejection is
+      // better than a half-supported container.
+      final candidate = ImportCandidate(sourcePath: p.join('a', 'b.mxl'));
+      expect(candidate.isMusicXml, isFalse);
+      expect(candidate.isSupported, isFalse);
+    });
+
+    test('renders each page to its own PNG and points every row at it', () async {
+      final file = await makeMusicXml('etude.musicxml');
+      final rasteriser = StubMusicXmlRasteriser(pages: 3);
+
+      final result = await makeServiceWithMusicXml(
+        rasteriser,
+      ).importScore([candidateFor(file)]);
+
+      expect(rasteriser.requested, [file.path]);
+      expect(result.pageCount, 3);
+      expect(result.pages.map((p) => p.kind), everyElement(PageSourceKind.bitmap));
+      expect(result.pages.map((p) => p.pdfPageNumber), everyElement(isNull));
+
+      // Each row must name a *different* generated file, in page order.
+      expect(
+        result.pages.map((p) => p.sourcePath),
+        [
+          'etude-page-1.png',
+          'etude-page-2.png',
+          'etude-page-3.png',
+        ],
+      );
+
+      // And the bytes on disk must be the ones the rasteriser produced, in the
+      // right file. Every row sharing one image would still pass the checks above.
+      for (final (i, page) in result.pages.indexed) {
+        final written = store.resolveScoreSource(result.score.id, page.sourcePath);
+        expect(written.existsSync(), isTrue, reason: 'page ${i + 1} missing');
+        expect(await written.readAsBytes(), utf8.encode('png-page-${i + 1}'));
+      }
+    });
+
+    test('keeps the .musicxml itself for provenance', () async {
+      final file = await makeMusicXml('nocturne.musicxml');
+
+      final result = await makeServiceWithMusicXml(
+        StubMusicXmlRasteriser(pages: 1),
+      ).importScore([candidateFor(file)]);
+
+      // The document is what a future higher-resolution re-render would read,
+      // so it must survive even though no page row points at it.
+      final source = result.sources.single;
+      expect(source.storedPath, 'nocturne.musicxml');
+      expect(
+        store.resolveScoreSource(result.score.id, source.storedPath).existsSync(),
+        isTrue,
+      );
+    });
+
+    test('stored page paths stay relative, as every stored path must', () async {
+      final file = await makeMusicXml('relative.musicxml');
+
+      final result = await makeServiceWithMusicXml(
+        StubMusicXmlRasteriser(pages: 2),
+      ).importScore([candidateFor(file)]);
+
+      for (final page in result.pages) {
+        expect(p.isRelative(page.sourcePath), isTrue, reason: page.sourcePath);
+      }
+    });
+
+    test('a document that renders no pages is an error, not an empty score', () async {
+      final file = await makeMusicXml('empty.musicxml');
+
+      await expectLater(
+        makeServiceWithMusicXml(
+          StubMusicXmlRasteriser(pages: 0),
+        ).importScore([candidateFor(file)]),
+        throwsA(
+          isA<ImportException>().having(
+            (e) => e.message,
+            'message',
+            contains('rendered no pages'),
+          ),
+        ),
+      );
+    });
+
+    test('an unrenderable document names the file that failed', () async {
+      // The user picked several files and has to be told which to replace, so the
+      // file name is load-bearing here rather than decoration.
+      final file = await makeMusicXml('broken.musicxml');
+
+      await expectLater(
+        makeServiceWithMusicXml(
+          StubMusicXmlRasteriser(failWith: const FormatException('bad xml')),
+        ).importScore([candidateFor(file)]),
+        throwsA(
+          isA<ImportException>()
+              .having((e) => e.message, 'message', contains('broken.musicxml'))
+              .having((e) => e.message, 'message', contains('bad xml')),
+        ),
+      );
+    });
+
+    test('a missing rasteriser fails loudly rather than importing nothing', () async {
+      final file = await makeMusicXml('nomlx.musicxml');
+
+      await expectLater(
+        makeService().importScore([candidateFor(file)]),
+        throwsA(
+          isA<ImportException>().having(
+            (e) => e.message,
+            'message',
+            contains('No MusicXML rasteriser configured'),
+          ),
+        ),
+      );
+    });
+
+    test('combines a rendered score with a scanned PDF in one import', () async {
+      // Mixed picks are the normal case when a user has a PDF and a MusicXML of
+      // the same piece, so the two page kinds must coexist in page order.
+      final pdf = await makePdf('scan.pdf', [1, 2, 3], 2);
+      final xml = await makeMusicXml('clean.musicxml');
+
+      final result = await makeServiceWithMusicXml(
+        StubMusicXmlRasteriser(pages: 2),
+      ).importScore([candidateFor(pdf), candidateFor(xml)]);
+
+      expect(
+        result.pages.map((p) => p.kind),
+        [
+          PageSourceKind.pdf,
+          PageSourceKind.pdf,
+          PageSourceKind.bitmap,
+          PageSourceKind.bitmap,
+        ],
+      );
+      expect(result.pages.map((p) => p.index), [0, 1, 2, 3]);
+      expect(
+        result.pages.map((p) => p.pdfPageNumber),
+        [1, 2, null, null],
+      );
+    });
+
+    test('duplicates are still detected against the MusicXML bytes', () async {
+      final first = await makeMusicXml('twin.musicxml', bytes: [1, 2, 3]);
+      final service = makeServiceWithMusicXml(StubMusicXmlRasteriser());
+      await service.importScore([candidateFor(first)]);
+
+      final second = await makeMusicXml('other-name.musicxml', bytes: [1, 2, 3]);
+      await expectLater(
+        service.importScore([candidateFor(second)]),
+        throwsA(isA<ImportException>()),
+      );
+    });
   });
 
   group('importScore', () {
