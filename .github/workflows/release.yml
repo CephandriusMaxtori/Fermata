@@ -161,3 +161,11 @@ jobs:
           files: |
             dist/Fermata-${{ needs.verify-tag.outputs.version }}.apk
             dist/Fermata-${{ needs.verify-tag.outputs.version }}.apk.sha256
+
+      - name: Discord Webhook Notify
+        if: always() && secrets.DISCORD_WEBHOOK != ''
+        uses: rjstone/discord-webhook-notify@v2.3.0
+        with:
+          severity: ${{ job.status }}
+          details: "Fermata release v${{ needs.verify-tag.outputs.version }} build completed with status: ${{ job.status }}."
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
