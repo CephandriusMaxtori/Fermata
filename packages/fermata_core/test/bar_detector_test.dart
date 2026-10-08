@@ -167,6 +167,18 @@ void main() {
       expect(system.barRange(1).end, system.bounds.right);
     });
 
+    test('handles multi-staff systems (e.g. grand staff) without double counting bars', () {
+      final layout = BarDetector.detect([
+        ...glyphRow(top: 0.15, height: 0.03, count: 12, start: 0.15, end: 0.45),
+        ...glyphRow(top: 0.15, height: 0.03, count: 12, start: 0.55, end: 0.85),
+        ...glyphRow(top: 0.22, height: 0.03, count: 12, start: 0.15, end: 0.45),
+        ...glyphRow(top: 0.22, height: 0.03, count: 12, start: 0.55, end: 0.85),
+      ]);
+
+      expect(layout.systems, hasLength(1));
+      expect(layout.systems.single.barCount, 2);
+    });
+
     test('a bar lands in the gap between the two measures', () {
       final layout = BarDetector.detect([
         ...glyphRow(top: 0.2, height: 0.08, count: 12, start: 0.15, end: 0.45),

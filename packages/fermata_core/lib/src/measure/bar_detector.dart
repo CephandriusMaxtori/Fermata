@@ -58,56 +58,66 @@ abstract final class BarDetector {
   static List<StaffSystem> _groupIntoSystems(List<TextRun> runs) {
     final sorted = [...runs]..sort((a, b) => a.centerY.compareTo(b.centerY));
 
-    final bands = <List<TextRun>>[];
+    // Step 1: Group into individual staves (tight vertical clustering)
+    final staves = <List<TextRun>>[];
     for (final run in sorted) {
-      // Bands close downward, never upward: with the runs sorted, the band that
-      // matters is the last one. Checking only `bands.last` also means two rows
-      // of the same height cannot merge into one band.
-      if (bands.isEmpty || !_joins(bands.last, run)) {
-        bands.add([run]);
-        continue;
+      if (staves.isEmpty || !_staffJoins(staves.last, run)) {
+        staves.add([run]);
+      } else {
+        staves.last.add(run);
       }
-      bands.last.add(run);
+    }
+
+    // Step 2: Group adjacent staves belonging to the same multi-staff system (e.g. grand staff)
+    final systemBands = <List<List<TextRun>>>[];
+    for (final staff in staves) {
+      if (systemBands.isEmpty || !_systemJoins(systemBands.last, staff)) {
+        systemBands.add([staff]);
+      } else {
+        systemBands.last.add(staff);
+      }
     }
 
     final systems = <StaffSystem>[];
-    for (final band in bands) {
-      final system = _buildSystem(band);
+    for (final systemBand in systemBands) {
+      final system = _buildSystem(systemBand);
       if (system != null) systems.add(system);
     }
     return systems;
   }
 
-  /// Whether [run] belongs in [band].
-  ///
-  /// The test is *vertical* overlap relative to the shorter of the two boxes,
-  /// not area overlap. Area overlap is the wrong tool here: the runs of a staff
-  /// system sit side by side horizontally and never overlap at all, so the first
-  /// glyph of a row would fail to join the second and every run would become its
-  /// own single-glyph band. Vertically they share the staff's height, and that
-  /// is the axis a system is defined along.
-  ///
-  /// Relative to the *shorter* box so that a short run next to a tall band
-  /// (a grand staff's two staves, say) still counts as joining, and so a tall
-  /// stray in a margin does not get absorbed by a short lyric line.
-  static bool _joins(List<TextRun> band, TextRun run) {
-    final bandBounds = _boundsOf(band);
-    final shorter =
-        math.min(run.bounds.height, bandBounds.height);
+  static bool _staffJoins(List<TextRun> staff, TextRun run) {
+    final staffBounds = _boundsOf(staff);
+    final shorter = math.min(run.bounds.height, staffBounds.height);
     if (shorter <= 0) return false;
-
-    final overlap =
-        math.min(run.bounds.bottom, bandBounds.bottom) -
-        math.max(run.bounds.top, bandBounds.top);
-    if (overlap <= 0) return false;
+    final overlap = math.min(run.bounds.bottom, staffBounds.bottom) -
+        math.max(run.bounds.top, staffBounds.top);
+    if (overlap <= 0) {
+      final gap = run.bounds.top > staffBounds.bottom
+          ? run.bounds.top - staffBounds.bottom
+          : staffBounds.top - run.bounds.bottom;
+      return gap < 0.005;
+    }
     return overlap / shorter >= _kVerticalOverlap;
   }
 
-  /// Builds a system from [band], or null if the band is not staff-shaped.
-  static StaffSystem? _buildSystem(List<TextRun> band) {
-    if (band.length < _kMinRunsPerSystem) return null;
+  static bool _systemJoins(List<List<TextRun>> systemBand, List<TextRun> staff) {
+    final systemBounds = _boundsOf(systemBand.expand((s) => s).toList());
+    final staffBounds = _boundsOf(staff);
+    final verticalGap = staffBounds.top - systemBounds.bottom;
+    if (verticalGap < 0.002 || verticalGap > 0.08) return false;
 
-    final bounds = _boundsOf(band);
+    final horizOverlap = math.min(staffBounds.right, systemBounds.right) -
+        math.max(staffBounds.left, systemBounds.left);
+    return horizOverlap > 0.1;
+  }
+
+  /// Builds a system from [systemBand], or null if the band is not staff-shaped.
+  static StaffSystem? _buildSystem(List<List<TextRun>> systemBand) {
+    final allRuns = systemBand.expand((s) => s).toList();
+    if (allRuns.length < _kMinRunsPerSystem) return null;
+
+    final bounds = _boundsOf(allRuns);
     // A staff is at least a few staff-spaces tall. Lyrics sit on a single line
     // and are well under this, which is what keeps sung text out of the layout.
     if (bounds.height < _kMinSystemHeight) return null;
@@ -115,10 +125,35 @@ abstract final class BarDetector {
     // A title spans the page but is one line; a system spans the page *and* is
     // tall. Requiring real horizontal density rejects both headings and page
     // numbers without needing to recognise the characters.
-    final runsPerUnitWidth = band.length / math.max(bounds.width, 1e-6);
+    final runsPerUnitWidth = allRuns.length / math.max(bounds.width, 1e-6);
     if (runsPerUnitWidth < _kMinRunsPerWidth) return null;
 
-    return StaffSystem(bounds: bounds, barStarts: _findBars(band, bounds));
+    // Pick the primary staff (the sub-band with the most runs) to find bars
+    final primaryStaff = systemBand.reduce((a, b) => a.length >= b.length ? a : b);
+
+    return StaffSystem(bounds: bounds, barStarts: _findBars(primaryStaff, bounds));
+  }
+
+  static List<List<TextRun>> _subdivideIntoStaves(List<TextRun> band) {
+    if (band.isEmpty) return [];
+    final sorted = [...band]..sort((a, b) => a.centerY.compareTo(b.centerY));
+
+    final staves = <List<TextRun>>[];
+    var currentStaff = <TextRun>[sorted.first];
+
+    for (var i = 1; i < sorted.length; i++) {
+      final run = sorted[i];
+      final prev = sorted[i - 1];
+      final verticalGap = run.bounds.top - prev.bounds.bottom;
+      if (verticalGap > 0.015) {
+        staves.add(currentStaff);
+        currentStaff = [run];
+      } else {
+        currentStaff.add(run);
+      }
+    }
+    staves.add(currentStaff);
+    return staves;
   }
 
   /// Left edge of every bar in [band].
