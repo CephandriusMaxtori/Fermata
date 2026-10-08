@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/common.dart' show CommonDatabase;
 
+import 'crisp_musicxml_rasteriser.dart';
 import 'pdfrx_page_counter.dart';
 
 /// The library root, created on first launch.
@@ -115,6 +116,11 @@ final importServiceProvider = FutureProvider<ImportService>((ref) async {
     scoreRepository: await ref.watch(scoreRepositoryProvider.future),
     fileStore: await ref.watch(fileStoreProvider.future),
     pdfPageCounter: PdfrxPdfPageCounter(),
+    // MusicXML has no viewer of its own: it is rendered to page images at import
+    // so the score arrives as ordinary bitmap pages and the pdfrx renderer and
+    // the annotation stack are untouched. Loading Bravura up front rather than
+    // lazily means the first import does not race the font.
+    musicXmlRasteriser: const CrispMusicXmlRasteriser(),
   );
   ref.onDispose(service.dispose);
   return service;

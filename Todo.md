@@ -15,7 +15,7 @@ discovered work, and log deviations at the bottom.
 
 All items below were verified by reading the implementation, not inferred from file names.
 
-**Baseline: `flutter analyze` clean, 301 tests passing** (84 `app` + 149 `fermata_core` + 68 `fermata_data`).
+**Baseline: `flutter analyze` clean, 318 tests passing** (90 `app` + 149 `fermata_core` + 79 `fermata_data`).
 Note `dart test` at the workspace root fails — it needs a reporter arg; run it per package.
 
 Our own Standard MIDI File reader lives in `packages/fermata_core/lib/src/midi/smf/`:
