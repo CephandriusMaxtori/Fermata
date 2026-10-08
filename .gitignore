@@ -28,6 +28,7 @@ app/android/**/GeneratedPluginRegistrant.java
 app/android/.cxx/
 *.jks
 *.keystore
+*.b64
 
 # Flutter/Dart tooling
 .flutter-plugins
