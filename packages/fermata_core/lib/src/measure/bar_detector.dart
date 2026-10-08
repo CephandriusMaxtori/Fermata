@@ -134,28 +134,6 @@ abstract final class BarDetector {
     return StaffSystem(bounds: bounds, barStarts: _findBars(primaryStaff, bounds));
   }
 
-  static List<List<TextRun>> _subdivideIntoStaves(List<TextRun> band) {
-    if (band.isEmpty) return [];
-    final sorted = [...band]..sort((a, b) => a.centerY.compareTo(b.centerY));
-
-    final staves = <List<TextRun>>[];
-    var currentStaff = <TextRun>[sorted.first];
-
-    for (var i = 1; i < sorted.length; i++) {
-      final run = sorted[i];
-      final prev = sorted[i - 1];
-      final verticalGap = run.bounds.top - prev.bounds.bottom;
-      if (verticalGap > 0.015) {
-        staves.add(currentStaff);
-        currentStaff = [run];
-      } else {
-        currentStaff.add(run);
-      }
-    }
-    staves.add(currentStaff);
-    return staves;
-  }
-
   /// Left edge of every bar in [band].
   ///
   /// Works by merging glyphs into x-intervals and treating the gaps between them

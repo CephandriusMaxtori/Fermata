@@ -67,6 +67,8 @@ jobs:
     needs: verify-tag
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -162,10 +164,16 @@ jobs:
             dist/Fermata-${{ needs.verify-tag.outputs.version }}.apk
             dist/Fermata-${{ needs.verify-tag.outputs.version }}.apk.sha256
 
+      # The webhook is lifted into job env rather than read from `secrets`
+      # directly here: GitHub's context availability table does not include
+      # `secrets` for `jobs.<job_id>.steps[*].if`, and referencing it in an `if`
+      # makes the whole workflow fail to start ("This run likely failed because
+      # of a workflow file issue") before any job runs. `jobs.<job_id>.env`
+      # *does* allow secrets, and `env` *is* allowed in a step `if`.
       - name: Discord Webhook Notify
-        if: always() && secrets.DISCORD_WEBHOOK != ''
+        if: always() && env.DISCORD_WEBHOOK != ''
         uses: rjstone/discord-webhook-notify@v2.3.0
         with:
           severity: ${{ job.status }}
           details: "Fermata release v${{ needs.verify-tag.outputs.version }} build completed with status: ${{ job.status }}."
-          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+          webhookUrl: ${{ env.DISCORD_WEBHOOK }}
