@@ -81,13 +81,8 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
   the toolbar, the painter and the provider all need it, so a shared value type should not be
   nested inside one of its consumers.
 - [x] **`deleteScore` doesn't delete files.** Fixed — `DriftScoreRepository` now takes `FileStore` and invokes `deleteScoreAssets` when deleting a score, fulfilling the contract in `repositories.dart:34-35`. Tested in `repository_test.dart`.
-- [ ] **`pixelRatio` is dropped in production.** `pdfrx_page_renderer.dart:51-55,87-91` accepts it
-  and passes *logical* pixels to `pdfPage.render`, so rasters are 1× and upscaled by
-  `RawImage(fit: BoxFit.fill)` on high-DPI screens. `FakePageRenderer` *does* apply it, so tests
-  can't catch this.
-- [ ] **No re-render on rotate or resize.** `didUpdateWidget` (`page_stack.dart:180-190`) only
-  reacts to `page.id` changes, contradicting the cache-key comment at
-  `pdfrx_page_renderer.dart:65-66` that assumes a rotate requests a new raster.
+- [x] **`pixelRatio` is dropped in production** (issue #10). Fixed — `PdfrxPageRenderer.render` now multiplies `fitted.width` and `fitted.height` by `pixelRatio` when calling `pdfPage.render` and `instantiateImageCodec`, and includes `pixelRatio` in the cache key.
+- [x] **No re-render on rotate or resize** (issue #11). Fixed — `ScorePageView` now tracks constraint/size changes via `LayoutBuilder` and re-renders when orientation or size changes, preventing stretched rasters.
 - [ ] **No index on `Scores.contentHash`** despite `tables.dart:15-18` promising "a single indexed
   lookup" — `findByContentHash` is a full scan. Moot today (import loads the whole library and
   compares in Dart) but fix before `contentHash` grows real traffic.
@@ -100,8 +95,7 @@ Not part of a milestone — fix as encountered. All verified by reading the sour
 - [ ] **`PdfrxPdfPageCounter` never calls `pdfrxFlutterInitialize()`** (`pdfrx_page_counter.dart:18`)
   while `PdfrxPageRenderer._documentFor` does (`:121`) — the first native pdfrx call in the app
   happens during import, before initialization.
-- [ ] **`_rasteriseBitmap` leaks the `ImageCodec`** — `pdfrx_page_renderer.dart:108-113` never
-  calls `codec.dispose()`.
+- [x] **`_rasteriseBitmap` leaks the `ImageCodec`** (issue #10). Fixed — `codec.dispose()` is now called after getting the first frame.
 - [ ] **Two `newId()` implementations.** `fermata_data`'s is fixed-length base-36 (load-bearing for
   draw order); `page_stack.dart:364-373` re-implements it with a variable-length counter. The
   ordering invariant is already violated in principle. Use the shared one.

@@ -74,22 +74,28 @@ class PdfrxPageRenderer implements PageRenderer {
     );
     if (fitted.width <= 0 || fitted.height <= 0) return null;
 
-    // Cache key includes the target size so a rotate or a window change does
-    // not silently reuse a raster at the wrong resolution.
-    final key = '${page.id}@${fitted.width.round()}x${fitted.height.round()}';
+    // Cache key includes target size and pixel ratio so rotate, resize or
+    // high-DPI changes do not silently reuse a raster at the wrong resolution.
+    final renderWidth = (fitted.width * pixelRatio).round();
+    final renderHeight = (fitted.height * pixelRatio).round();
+    final key = '${page.id}@${renderWidth}x$renderHeight';
     final cached = _rasters[page.id];
     if (cached != null && cached.key == key) return cached.image;
 
-    final image = await _rasterise(page, fitted);
+    final image = await _rasterise(page, fitted, pixelRatio);
     if (image == null) return null;
 
     _rasters[page.id] = _Raster(key, image);
     return image;
   }
 
-  Future<ui.Image?> _rasterise(ScorePage page, ({double width, double height}) fitted) async {
+  Future<ui.Image?> _rasterise(
+    ScorePage page,
+    ({double width, double height}) fitted,
+    double pixelRatio,
+  ) async {
     if (page.kind == PageSourceKind.bitmap) {
-      return _rasteriseBitmap(page, fitted);
+      return _rasteriseBitmap(page, fitted, pixelRatio);
     }
 
     final document = await _documentFor(_absolutePath(page));
@@ -97,8 +103,8 @@ class PdfrxPageRenderer implements PageRenderer {
     final cancellation = pdfPage.createCancellationToken();
 
     final rendered = await pdfPage.render(
-      fullWidth: fitted.width,
-      fullHeight: fitted.height,
+      fullWidth: fitted.width * pixelRatio,
+      fullHeight: fitted.height * pixelRatio,
       cancellationToken: cancellation,
     );
     if (rendered == null) return null;
@@ -219,6 +225,7 @@ class PdfrxPageRenderer implements PageRenderer {
   Future<ui.Image?> _rasteriseBitmap(
     ScorePage page,
     ({double width, double height}) fitted,
+    double pixelRatio,
   ) async {
     // Bitmap sources are stored score-relative so a restored backup still
     // renders; the store resolves them against the current library root.
@@ -227,9 +234,10 @@ class PdfrxPageRenderer implements PageRenderer {
 
     final codec = await ui.instantiateImageCodec(
       await file.readAsBytes(),
-      targetWidth: fitted.width.round(),
+      targetWidth: (fitted.width * pixelRatio).round(),
     );
     final frame = await codec.getNextFrame();
+    codec.dispose();
     return frame.image;
   }
 

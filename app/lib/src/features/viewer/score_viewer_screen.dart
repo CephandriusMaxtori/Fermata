@@ -173,13 +173,12 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
     final size = context.size;
     if (size == null || size.isEmpty) return;
 
-    // The page is letterboxed into the viewport, so a fraction of the *page* is
-    // not a fraction of the *screen*. Clamping to the viewport is what stops a
-    // bar in the right-hand margin from scrolling the page off screen.
-    final dx = (range.start * size.width).clamp(0.0, size.width);
-    final dy = (system.bounds.top * size.height).clamp(0.0, size.height);
-    _transformController.value =
-        Matrix4.identity()..translateByDouble(dx, dy, 0, 1);
+    const scale = 2.2;
+    final dx = -range.start * size.width;
+    final dy = -system.bounds.top * size.height;
+    _transformController.value = Matrix4.identity()
+      ..translateByDouble(dx, dy, 0, 1)
+      ..scaleByDouble(scale, scale, scale, 1);
   }
 
   /// Switches between page stepping and bar stepping.
@@ -205,7 +204,11 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
       _barMode = enabling;
       _cursor = cursor;
     });
-    if (enabling) _transformController.value = Matrix4.identity();
+    if (enabling) {
+      _scrollToCursor();
+    } else {
+      _transformController.value = Matrix4.identity();
+    }
   }
 
   void _stepBar(int delta, List<ScorePage> pages) {
@@ -224,7 +227,9 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
         next.pageIndex,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
-      );
+      ).then((_) {
+        if (mounted) _scrollToCursor();
+      });
       return;
     }
     _scrollToCursor();

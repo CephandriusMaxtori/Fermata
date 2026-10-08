@@ -181,6 +181,7 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
   ui.Image? _image;
   Size _logicalSize = Size.zero;
   bool _pending = true;
+  Size? _lastAvailableSize;
 
   @override
   void initState() {
@@ -196,6 +197,7 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
       _image = null;
       _logicalSize = Size.zero;
       _pending = true;
+      _lastAvailableSize = null;
       WidgetsBinding.instance.addPostFrameCallback((_) => _render());
     }
   }
@@ -253,7 +255,18 @@ class _ScorePageViewState extends ConsumerState<ScorePageView> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-                // The gesture detector sits inside the SizedBox rather than wrapping it.
+        final available = Size(constraints.maxWidth, constraints.maxHeight);
+        if (_lastAvailableSize != available) {
+          _lastAvailableSize = available;
+          if (!_pending && _image != null) {
+            widget.renderer.evict(widget.page);
+            _image = null;
+            _logicalSize = Size.zero;
+            _pending = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) => _render());
+          }
+        }
+        // The gesture detector sits inside the SizedBox rather than wrapping it.
         // That makes its hit-test box exactly the box the page and the ink
         // occupy, so a normalized coordinate from a touch means the same thing
         // to the painter. Wrapping the SizedBox instead would make the gesture
