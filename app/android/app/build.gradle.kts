@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -33,14 +36,14 @@ android {
     // no keystore can still `flutter run --release`, and the cost is confined:
     // a debug-signed release cannot be updated by a CI-signed one, so it only
     // ever runs on a developer device. See docs/obtainium.md.
-    val keystoreProperties = java.util.Properties().apply {
-        val file = rootProject.file("key.properties")
-        if (file.exists()) {
-            file.inputStream().use { load(it) }
-        }
+    val keystoreProperties = Properties()
+    val keystoreFile = rootProject.file("key.properties")
+    if (keystoreFile.exists()) {
+        FileInputStream(keystoreFile).use { keystoreProperties.load(it) }
     }
+
     signingConfigs {
-        if (keystoreProperties.isNotEmpty()) {
+        if (!keystoreProperties.isEmpty) {
             create("release") {
                 storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
                 storePassword = keystoreProperties.getProperty("storePassword")
@@ -52,7 +55,7 @@ android {
 
     buildTypes {
         release {
-            signingConfig = if (keystoreProperties.isNotEmpty()) {
+            signingConfig = if (!keystoreProperties.isEmpty) {
                 signingConfigs.getByName("release")
             } else {
                 signingConfigs.getByName("debug")
