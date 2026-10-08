@@ -156,26 +156,39 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
   /// The transform is rebuilt from identity rather than composed onto the
   /// current one: bar positions are page fractions, so a leftover pinch would
   /// scale the offset into the wrong place, and a leftover drag would compound.
-  void _scrollToCursor() {
-    // The layout comes from the *cursor's* page, not the page currently on
-    // screen. They are not always the same: switching bar mode on resets the
-    // cursor to the first bar of the score while `PageView` stays wherever the
-    // user was, so reading the current page's layout here indexed it with
-    // another page's system and bar and tripped `barRange`'s assert. That was
-    // the second half of #5, and the half that needed an actual mode switch to
-    // reach.
+  Future<void> _scrollToCursor() async {
+    final size = context.size;
+    if (size == null || size.isEmpty) return;
+
+    final pages = ref.read(scorePagesProvider(widget.scoreId)).value;
+    if (pages == null || _cursor.pageIndex >= pages.length) return;
+    final page = pages[_cursor.pageIndex];
+
+    final renderer = await ref.read(pageRendererProvider.future);
+    if (!mounted) return;
+    final geometry = await renderer.geometry(page);
+    if (geometry == null || !mounted) return;
+
     final layout = _barLayouts[_cursor.pageIndex] ?? BarLayout.empty;
     if (_cursor.systemIndex >= layout.systems.length) return;
     final system = layout.systems[_cursor.systemIndex];
     if (_cursor.barIndex >= system.barCount) return;
     final range = system.barRange(_cursor.barIndex);
 
-    final size = context.size;
-    if (size == null || size.isEmpty) return;
+    final fitted = geometry.fitWithin(
+      availableWidth: size.width,
+      availableHeight: size.height,
+    );
+    if (fitted.width <= 0 || fitted.height <= 0) return;
 
     const scale = 2.2;
-    final dx = -range.start * size.width;
-    final dy = -system.bounds.top * size.height;
+    final barX = range.start * fitted.width;
+    final barY = system.bounds.top * fitted.height;
+
+    // Center horizontally, position near upper quarter vertically
+    final dx = (size.width / 2) - (barX * scale);
+    final dy = (size.height / 4) - (barY * scale);
+
     _transformController.value = Matrix4.identity()
       ..translateByDouble(dx, dy, 0, 1)
       ..scaleByDouble(scale, scale, scale, 1);
@@ -187,7 +200,7 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
   /// layouts may have just been discovered, and carrying a cursor from a previous
   /// session's guess would put the first bar step somewhere arbitrary. Turning
   /// it off keeps the cursor, so switching back resumes where the user was.
-  void _toggleBarMode(List<ScorePage> pages) {
+  void _toggleBarMode(List<ScorePage> pages) async {
     final enabling = !_barMode;
     if (enabling && !BarNavigator.isNavigable(_orderedLayouts(pages))) return;
 
@@ -205,13 +218,13 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
       _cursor = cursor;
     });
     if (enabling) {
-      _scrollToCursor();
+      await _scrollToCursor();
     } else {
       _transformController.value = Matrix4.identity();
     }
   }
 
-  void _stepBar(int delta, List<ScorePage> pages) {
+  void _stepBar(int delta, List<ScorePage> pages) async {
     final layouts = _orderedLayouts(pages);
     final next = delta > 0
         ? BarNavigator.forward(_cursor, layouts)
@@ -223,16 +236,15 @@ class _ScoreViewerScreenState extends ConsumerState<ScoreViewerScreen> {
 
     if (pageChanged) {
       _transformController.value = Matrix4.identity();
-      _pageController.animateToPage(
+      await _pageController.animateToPage(
         next.pageIndex,
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
-      ).then((_) {
-        if (mounted) _scrollToCursor();
-      });
+      );
+      if (mounted) await _scrollToCursor();
       return;
     }
-    _scrollToCursor();
+    await _scrollToCursor();
   }
 
   @override
