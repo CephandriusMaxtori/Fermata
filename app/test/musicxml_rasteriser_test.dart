@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'dart:ui' as ui;
 
+import 'package:crisp_notation/crisp_notation.dart' show writeMusicXmlToMxl;
 import 'package:fermata/src/providers/crisp_musicxml_rasteriser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -156,6 +157,58 @@ void main() {
 
       expect(render.title, isNotNull);
       expect(render.composer, contains('Composer'));
+    });
+
+    test('a .mxl container renders the same score as its plain XML', () async {
+      // A real ZIP, not plain XML renamed: written with the package's own writer
+      // so `META-INF/container.xml` and a deflated `score.xml` are both present.
+      // Hand-rolling the archive bytes would test my zip code, not the import.
+      final dir = await Directory.systemTemp.createTemp('fermata_mxl_test_');
+      addTearDown(() async {
+        if (dir.existsSync()) await dir.delete(recursive: true);
+      });
+      final file = File('${dir.path}${Platform.pathSeparator}piece.mxl');
+      await file.writeAsBytes(writeMusicXmlToMxl(_minimalScore));
+
+      final render = await const CrispMusicXmlRasteriser().render(file.path);
+
+      expect(render.pages, isNotEmpty);
+      final bytes = Uint8List.fromList(render.pages.first.pngBytes);
+      expect(isPng(bytes), isTrue);
+      final size = pngSize(bytes);
+      expect(size.width / size.height, closeTo(210 / 297, 0.02));
+    });
+
+    test('uncompressed XML under a .mxl name still imports', () async {
+      // Publishers do ship this, and it is detected from the bytes rather than
+      // the extension. Trusting the extension would reject a valid score with a
+      // "not a zip file" error.
+      final dir = await Directory.systemTemp.createTemp('fermata_mxl_test_');
+      addTearDown(() async {
+        if (dir.existsSync()) await dir.delete(recursive: true);
+      });
+      final file = File('${dir.path}${Platform.pathSeparator}mislabelled.mxl');
+      await file.writeAsString(_minimalScore);
+
+      final render = await const CrispMusicXmlRasteriser().render(file.path);
+
+      expect(render.pages, isNotEmpty);
+    });
+
+    test('a .mxl that is a corrupt archive fails rather than rendering blank', () async {
+      final dir = await Directory.systemTemp.createTemp('fermata_mxl_test_');
+      addTearDown(() async {
+        if (dir.existsSync()) await dir.delete(recursive: true);
+      });
+      final file = File('${dir.path}${Platform.pathSeparator}broken.mxl');
+      // ZIP magic, then nothing usable: the worst case, where the container is
+      // recognisably an archive but holds no score.
+      await file.writeAsBytes([0x50, 0x4B, 0x03, 0x04, 0x00, 0x00]);
+
+      await expectLater(
+        const CrispMusicXmlRasteriser().render(file.path),
+        throwsA(anything),
+      );
     });
 
     test('a document that is not MusicXML fails rather than rendering blank', () async {

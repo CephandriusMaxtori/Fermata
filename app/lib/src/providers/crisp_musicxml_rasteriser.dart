@@ -11,6 +11,10 @@ import 'package:flutter/material.dart' show Color, WidgetsFlutterBinding;
 
 /// Renders a MusicXML document to PNG pages with `crisp_notation`.
 ///
+/// Accepts both plain `.musicxml` and the zipped `.mxl` container, which is what
+/// every major notation editor actually writes. See [_readScoreXml] for why the
+/// extension is not trusted to decide.
+///
 /// Lives in `app/` rather than `fermata_data` because rasterising needs Flutter:
 /// `renderLayoutToPng` uses `dart:ui`, and the SMuFL glyph metrics that position
 /// every glyph come from the Bravura asset that `crisp_notation_core` — being
@@ -47,7 +51,7 @@ class CrispMusicXmlRasteriser implements MusicXmlPageRasteriser {
   Future<MusicXmlRender> render(String absolutePath) async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    final xml = await File(absolutePath).readAsString();
+    final xml = await _readScoreXml(absolutePath);
     final score = scoreFromMusicXml(xml);
 
     // Loading before layout rather than letting a view trigger it: the glyph
@@ -155,6 +159,24 @@ ScoreLayout _flattenPage(PageLayout page, PageMetrics metrics) {
     measureRegions: const [],
     crossStaffStubs: const {},
   );
+}
+
+/// Reads the MusicXML document out of [absolutePath], unarchiving `.mxl`.
+///
+/// The extension picks the path, but the *bytes* decide the actual handling:
+/// `readMusicXmlFromMxl` detects the ZIP magic itself and falls back to reading
+/// the file as plain XML when there is no archive. That is deliberate on their
+/// part — publishers do ship uncompressed MusicXML under a `.mxl` extension, so
+/// trusting the extension here would reject a perfectly good score. Routing both
+/// through the same call keeps that tolerance, and means a mislabelled file
+/// still imports instead of failing.
+///
+/// `FormatException` is left to propagate: `ImportService` catches it and names
+/// the file, which is what the user needs when a handful of scores did not
+/// import.
+Future<String> _readScoreXml(String absolutePath) async {
+  final bytes = await File(absolutePath).readAsBytes();
+  return readMusicXmlFromMxl(bytes);
 }
 
 LayoutPrimitive _translate(LayoutPrimitive primitive, double dx, double dy) {

@@ -35,6 +35,9 @@ class MusicXmlRender {
 
 /// Renders a MusicXML document into page images.
 ///
+/// Handles both plain `.musicxml` and the zipped `.mxl` container; see
+/// `ImportCandidate.isMusicXml`.
+///
 /// An interface for the same reason [PdfPageCounter] is one: the real
 /// implementation needs Flutter to load Bravura and rasterise, which cannot run
 /// in a plain `dart test`. Declaring it here keeps the import rules — page

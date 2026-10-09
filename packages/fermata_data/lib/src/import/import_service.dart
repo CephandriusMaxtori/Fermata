@@ -32,11 +32,13 @@ class ImportCandidate {
 
   bool get isPdf => extension == '.pdf';
 
-  /// A MusicXML document, which is rendered to page images rather than shown as
-  /// a document. `.mxl` (the zipped container) is not accepted yet: plain XML is
-  /// what homr emits, and half-supporting the format is worse than a clear
-  /// rejection the user can act on.
-  bool get isMusicXml => extension == '.musicxml';
+  /// A MusicXML document, plain or in the zipped `.mxl` container.
+  ///
+  /// Both are accepted because `.mxl` is what every major notation editor
+  /// actually writes (MuseScore, Sibelius, Finale, Dorico), so rejecting it
+  /// would have made the format look broken for most real files. The container
+  /// is read in pure Dart — no `archive` dependency and no native code.
+  bool get isMusicXml => extension == '.musicxml' || extension == '.mxl';
 
   /// Image formats the document picker is allowed to return.
   static const Set<String> supportedImageExtensions = {
@@ -51,6 +53,7 @@ class ImportCandidate {
   static const Set<String> supportedExtensions = {
     '.pdf',
     '.musicxml',
+    '.mxl',
     ...supportedImageExtensions,
   };
 

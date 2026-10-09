@@ -132,12 +132,13 @@ void main() {
       );
     });
 
-    test('the zipped .mxl container is not yet accepted', () {
-      // Deliberate: plain XML is what homr emits, and a clear rejection is
-      // better than a half-supported container.
+    test('the zipped .mxl container is accepted too', () {
+      // Every major notation editor writes .mxl, so rejecting it would make the
+      // format look broken for most real files.
       final candidate = ImportCandidate(sourcePath: p.join('a', 'b.mxl'));
-      expect(candidate.isMusicXml, isFalse);
-      expect(candidate.isSupported, isFalse);
+      expect(candidate.isMusicXml, isTrue);
+      expect(candidate.isSupported, isTrue);
+      expect(ImportCandidate.supportedExtensions, contains('.mxl'));
     });
 
     test('renders each page to its own PNG and points every row at it', () async {
