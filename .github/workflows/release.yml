@@ -1,3 +1,24 @@
+name: Release
+
+# Fires on tag creation or manual trigger
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v1.2.0)'
+        required: true
+
+# Least privilege for a build, plus `contents: write` for the release upload.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   verify-tag:
     name: Verify tag against pubspec
@@ -12,6 +33,11 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
 
+      # The load-bearing gate in this file. Obtainium compares the release tag
+      # against the installed versionName to decide an update exists, and
+      # Android compares versionCode to decide an install is an upgrade. A tag
+      # that disagrees with pubspec produces an app that reports an update
+      # forever while the installer declines it, so this fails instead.
       - name: Check version
         id: check
         run: |
@@ -22,14 +48,14 @@ jobs:
           tag='${{ inputs.tag || github.ref_name }}'
           expected="v${name}"
           if [ "$tag" != "$expected" ]; then
-            echo "::error::tag $tag does not match pubspec version $raw (expected $expected)"
+            echo "::error::tag $tag does not match pubspec version $raw (expected$expected)"
             exit 1
           fi
           if ! [[ "$code" =~ ^[0-9]+$ ]]; then
             echo "::error::version code '$code' in pubspec is not a number; Android requires an integer that increases"
             exit 1
           fi
-          echo "tag $tag matches pubspec $raw"
+          echo "tag $tag matches pubspec$raw"
           echo "version=${name}" >> "$GITHUB_OUTPUT"
           echo "build-code=${code}" >> "$GITHUB_OUTPUT"
 
@@ -50,3 +76,87 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: gradle
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # Same pin as ci.yml, and for the same reason: a Flutter release must
+          # not be able to change what a published APK contains.
+          flutter-version: "3.47.5"
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Generate drift code
+        working-directory: packages/fermata_data
+        run: dart run build_runner build
+
+      # The keystore arrives as base64 in a secret because GitHub secrets are
+      # write-only: this file exists for the few seconds the build needs it and
+      # is overwritten and deleted below. A wrong password surfaces here, from
+      # apksigner, rather than as a user's install failing.
+      - name: Decode signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64}" ]; then
+            echo "::error::RELEASE_KEYSTORE_BASE64 is not set; see docs/obtainium.md for the one-time setup"
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > app/android/fermata-release.jks
+          cat > app/android/key.properties <<EOF
+          storeFile=fermata-release.jks
+          storePassword=${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.RELEASE_KEY_ALIAS }}
+          keyPassword=${{ secrets.RELEASE_KEY_PASSWORD }}
+          EOF
+
+      # Universal, not --split-per-abi. Obtainium's CPU filter is a filename
+      # heuristic and can get it wrong; one APK that fits every device removes a
+      # whole class of "no compatible APK" failures at the cost of a larger
+      # download.
+      - name: Build release APK
+        working-directory: app
+        run: flutter build apk --release
+
+      # The published name has to match `apkFilterRegEx` in
+      # assets/distribution/obtainium_config.json, or Obtainium cannot pick the
+      # APK out from the checksum it also downloads.
+      - name: Name and checksum
+        env:
+          VERSION: ${{ needs.verify-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          apk=app/build/app/outputs/flutter-apk/app-release.apk
+          mv "$apk" "dist/Fermata-${VERSION}.apk"
+          cd dist
+          sha256sum "Fermata-${VERSION}.apk" > "Fermata-${VERSION}.apk.sha256"
+
+      - name: Verify signature
+        env:
+          VERSION: ${{ needs.verify-tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner" \
+            verify --print-certs "dist/Fermata-${VERSION}.apk"
+
+      # Not `if: always()`: on a failed build the keystore is already gone with
+      # the runner, and publishing a half-finished release is worse than failing.
+      - name: Remove signing key
+        if: failure() || success()
+        working-directory: app/android
+        run: shred -u fermata-release.jks 2>/dev/null || rm -f fermata-release.jks
+
+      - name: Upload APK and checksum
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Fermata ${{ needs.verify-tag.outputs.version }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/Fermata-${{ needs.verify-tag.outputs.version }}.apk
+            dist/Fermata-${{ needs.verify-tag.outputs.version }}.apk.sha256
